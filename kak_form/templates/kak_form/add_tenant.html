@@ -1,0 +1,17 @@
+{% extends 'generic/object_edit.html' %}
+{% block javascript %}
+{{ block.super }}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.field-group.mb-5').forEach(function(group) {
+        const h2 = group.querySelector('h2');
+        if (h2) {
+            const text = h2.textContent.trim();
+            if (text === 'Custom Fields') {
+                group.style.display = 'none';
+            }
+        }
+    });
+});
+</script>
+{% endblock %}

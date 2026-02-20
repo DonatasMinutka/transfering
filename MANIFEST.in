@@ -1,0 +1,2 @@
+recursive-include kak_form/templates *
+recursive-include kak_form/static *

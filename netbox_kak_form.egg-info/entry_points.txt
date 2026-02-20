@@ -1,0 +1,2 @@
+[netbox_plugins]
+kak_form = kak_form

@@ -1,0 +1,73 @@
+<div class="card">
+    <h2 class="card-header">KAK Information</h2>
+    <div class="card-body">
+        {% if device.local_context_data.KAK_DATA %}
+            {% with data=device.local_context_data.KAK_DATA %}
+            <table class="table table-hover attr-table">
+                {% if data.services %}
+                <tr>
+                    <th scope="row">Service</th>
+                    <td>{{ data.services }}</td>
+                </tr>
+                {% endif %}
+                {% if data.capn %}
+                <tr>
+                    <th scope="row">CAPN Address</th>
+                    <td>{{ data.capn }}</td>
+                </tr>
+                {% endif %}
+                {% if data.wan %}
+                <tr>
+                    <th scope="row">Given WAN Address</th>
+                    <td>{{ data.wan }}</td>
+                </tr>
+                {% endif %}
+                {% if data.lan %}
+                <tr>
+                    <th scope="row">LAN IP Address and Subnet Mask</th>
+                    <td>{{ data.lan }}</td>
+                </tr>
+                {% endif %}
+                {% if data.service_id %}
+                <tr>
+                    <th scope="row">Service ID</th>
+                    <td>{{ data.service_id }}</td>
+                </tr>
+                {% endif %}
+                {% if data.bgp_neighbor_ip_address %}
+                <tr>
+                    <th scope="row">BGP Neighbor IP Address</th>
+                    <td>{{ data.bgp_neighbor_ip_address }}</td>
+                </tr>
+                {% endif %}
+                {% if data.wan_ip %}
+                <tr>
+                    <th scope="row">WAN IP Address</th>
+                    <td>{{ data.wan_ip }}</td>
+                </tr>
+                {% endif %}
+                {% if data.dhcp_start %}
+                <tr>
+                    <th scope="row">DHCP Start Address</th>
+                    <td>{{ data.dhcp_start }}</td>
+                </tr>
+                {% endif %}
+                {% if data.dhcp_end %}
+                <tr>
+                    <th scope="row">DHCP End Address</th>
+                    <td>{{ data.dhcp_end }}</td>
+                </tr>
+                {% endif %}
+                {% if data.enable_dhcp != None %}
+                <tr>
+                    <th scope="row">Is DHCP Enabled</th>
+                    <td>{{ data.enable_dhcp }}</td>
+                </tr>
+                {% endif %}
+            </table>
+            {% endwith %}
+        {% else %}
+        <p class="text-muted">No KAK data available</p>
+        {% endif %}
+    </div>
+</div>

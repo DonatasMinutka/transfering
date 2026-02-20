@@ -1,0 +1,11 @@
+.hide-role-field,
+.hide-role-field + .ts-wrapper,
+[for="id_role"],
+#id_role_ts_wrapper {
+    display: none !important;
+}
+
+.field-role,
+.row:has(.hide-role-field) {
+    display: none !important;
+}
