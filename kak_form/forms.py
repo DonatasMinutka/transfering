@@ -277,9 +277,10 @@ class CustomDeviceForm(forms.ModelForm):
         device_type = cleaned_data.get('device_type')
         service_required_fields = {
             'capn': ['CAPN_Address'],
+            'wan': ['Given_WAN_Address']
         }
 
-        all_conditional_fields = {'CAPN_Address'}
+        all_conditional_fields = {'CAPN_Address','Given_WAN_Address'}
         
         required_fields = service_required_fields.get(service, [])
         

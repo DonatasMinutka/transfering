@@ -13,15 +13,19 @@ document.addEventListener('DOMContentLoaded', function() {
             input: document.querySelector('input[name="Enable_DHCP"]'),
             get container() { return this.input?.closest('tr') || this.input?.parentElement.parentElement; }
         },
+        wan: {
+            input: document.querySelector('input[name="Given_WAN_Address"]'),
+            get container() { return this.input?.closest('tr') || this.input?.parentElement.parentElement; }
+        },
     };
     
     function getFieldsForService(service) {
         const baseMapping = {
-            'capn': ['capn','enable_dhcp'],
-            'internet': ['enable_dhcp'],
-            'isop': [],
-            'wan_failover': ['enable_dhcp'],
-            'nkdps': ['enable_dhcp'],
+            'capn': ['capn','enable_dhcp','wan'],
+            'internet': ['enable_dhcp','wan'],
+            'isop': ['wan'],
+            'wan_failover': ['enable_dhcp','wan'],
+            'nkdps': ['enable_dhcp','wan'],
             'lte_5g_nokia':['enable_dhcp'],
         };
         
