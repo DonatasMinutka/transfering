@@ -478,7 +478,6 @@ class CustomDeviceForm(forms.ModelForm):
         calculated_wan_ip = self._calculate_first_host(wan_ip, 29)
         calculated_wan_and_bgp_ip = self._calculate_wan_and_bgp_ip(wan_ip)
         wan_ip_60f_nkdps = self._wan_ip_60f_nkdps(wan_ip)
-
         interfaces = []
         if service == 'capn':
             if 'd53g' in device_model:
@@ -585,16 +584,33 @@ class CustomDeviceForm(forms.ModelForm):
                 
                 ]
         elif service == 'lte_5g_nokia':
-            if 'd53g' in device_model:
+            if 'rb760igs capn' in device_model:
                 interfaces = [
-                    {'name': 'ether1', 'type': '1000base-t', 'enabled': True, 'ip': wan_ip},
+                    {'name': 'ether1', 'type': '1000base-t', 'enabled': True},
                     {'name': 'bridge1', 'type': 'Bridge', 'enabled': True, 'ip': lan_ip, 'is_primary': True},
                     {'name': 'ether2', 'type': '1000base-t', 'enabled': True,'bridge': 'bridge1'},
                     {'name': 'ether3', 'type': '1000base-t', 'enabled': True,'bridge': 'bridge1'},  
                     {'name': 'ether4', 'type': '1000base-t', 'enabled': True,'bridge': 'bridge1'},
                     {'name': 'ether5', 'type': '1000base-t', 'enabled': True,'bridge': 'bridge1'},
                     {'name': 'serial0', 'type': 'other', 'enabled': True}, 
-                
+                ]
+            elif 'fortigate 60f internet' in device_model:
+                interfaces = [
+                    {'name': 'wan1', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'wan2', 'type': '1000base-t', 'enabled': True, 'description': 'WAN interface (DHCP)'},
+                    {'name': 'dmz', 'type': '1000base-t', 'enabled': True, 'description': 'Default: 10.10.10.1'},
+                    {'name': 'internal', 'type': 'bridge', 'enabled': True, 'ip': lan_ip, 'is_primary': True},
+                    {'name': 'internal1', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'internal2', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'internal3', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'internal4', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'internal5', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'a', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'b', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'modem', 'type': '1000base-t', 'enabled': False},
+                    {'name': 'naf.root', 'type': 'virtual', 'enabled': True},
+                    {'name': 'l2t.root', 'type': 'virtual', 'enabled': True},
+                    {'name': 'ssl.root', 'type': 'virtual', 'enabled': True, 'description':'SSL VPN interface'},
                 ]
         elif service == 'wan_failover':
             if '40f' in device_model:
@@ -609,7 +625,7 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'naf.root', 'type': 'virtual', 'enabled': True},
                     {'name': 'l2t.root', 'type': 'virtual', 'enabled': True},
                     {'name': 'ssl.root', 'type': 'virtual', 'enabled': True},
-                    {'name': 'loop', 'type': 'virtual', 'enabled': True, 'ip': f'{wan_ip}/24'},
+                    {'name': 'loop', 'type': 'virtual', 'enabled': True},
                     {'name': 'interval', 'type': 'virtual', 'enabled': True, 'ip': lan_ip, 'is_primary': True},
                 ]
             elif 'd53g' in device_model:
