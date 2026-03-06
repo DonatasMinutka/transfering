@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const siteField = document.querySelector('#id_site');
 
     if (!siteField) return;
-
+    let editingSiteId = null;
     const addButton = document.createElement('a');
     addButton.href = '#';
     addButton.className = 'btn btn-sm btn-success';
@@ -103,10 +103,13 @@ document.addEventListener('DOMContentLoaded', function () {
     widget.parentNode.insertBefore(rowWrapper, widget);
     rowWrapper.appendChild(widget);
     rowWrapper.appendChild(hintBtn);
-    rowWrapper.parentNode.insertBefore(addButton,editButton, rowWrapper.nextSibling);
+    rowWrapper.parentNode.insertBefore(addButton, rowWrapper.nextSibling);
+    rowWrapper.parentNode.insertBefore(editButton, addButton.nextSibling);
 
     addButton.addEventListener('click', function (e) {
         e.preventDefault();
+
+        editingSiteId = null;
 
         const popup = window.open(
             '/plugins/kak-Form/add_site/',
@@ -128,13 +131,21 @@ document.addEventListener('DOMContentLoaded', function () {
             } catch (e) { }
         }, 300);
     });
-        addButton.addEventListener('click', function (e) {
-
+    editButton.addEventListener('click', function (e) {
         e.preventDefault();
 
+        const siteId = siteField.value;
+        
+        if (!siteId) {
+            showErrorMessage('Please select a site to edit');
+            return;
+        }
+
+        editingSiteId = siteId;  
+
         const popup = window.open(
-            '/plugins/kak-Form/edit_site/',
-            'addSite',
+            '/plugins/kak-Form/site/' + siteId + '/edit/',
+            'editSite',
             'width=900,height=900,scrollbars=yes,resizable=yes'
         );
 
@@ -152,31 +163,54 @@ document.addEventListener('DOMContentLoaded', function () {
             } catch (e) { }
         }, 300);
     });
+function refreshSiteDropdown() {
+    const cacheBreaker = new Date().getTime();
+    
+    fetch('/api/dcim/sites/?limit=0&_=' + cacheBreaker)
+        .then(r => r.json())
+        .then(data => {
+            if (siteField.tomselect) {
+                const ts = siteField.tomselect;
+                siteField.innerHTML = '';
+                data.results.forEach(site => {
+                    const option = document.createElement('option');
+                    option.value = site.id;
+                    option.textContent = site.display;
+                    siteField.appendChild(option);
+                });
 
-    function refreshSiteDropdown() {
-        fetch('/api/dcim/sites/?limit=0')
-            .then(r => r.json())
-            .then(data => {
-                if (siteField.tomselect) {
-                    const ts = siteField.tomselect;
-                    ts.clearOptions();
-                    data.results.forEach(site => {
-                        ts.addOption({ value: site.id, text: site.display });
-                    });
-                    if (data.results.length > 0) {
-                        const newest = data.results.reduce((a, b) =>
+                const siteToSelect = editingSiteId || 
+                    (data.results.length > 0 ? 
+                        data.results.reduce((a, b) =>
                             new Date(a.created) > new Date(b.created) ? a : b
-                        );
-                        ts.setValue(newest.id);
-                    }
-                    ts.refreshOptions(false);
-                }
-                siteField.dispatchEvent(new Event('change', { bubbles: true }));
-                showSuccessMessage('Site list updated. Newest site selected.');
-            })
-            .catch(() => showErrorMessage('Failed to refresh site list. Please refresh the page.'));
-    }
+                        ).id 
+                    : null);
 
+                ts.sync();  
+                ts.clearOptions();  
+                
+                data.results.forEach(site => {
+                    ts.addOption({ value: site.id, text: site.display });
+                });
+
+                if (siteToSelect) {
+                    ts.setValue(siteToSelect);
+                    console.log('Selected site:', siteToSelect);
+                }
+                
+                if (editingSiteId) {
+                    editingSiteId = null;
+                }
+            }
+            
+            siteField.dispatchEvent(new Event('change', { bubbles: true }));
+            showSuccessMessage('Site list updated.');
+        })
+        .catch(err => {
+            console.error('Fetch error:', err);
+            showErrorMessage('Failed to refresh site list');
+        });
+}
     function makeAlert(message, bg) {
         const alert = document.createElement('div');
         alert.className = 'alert alert-dismissible';

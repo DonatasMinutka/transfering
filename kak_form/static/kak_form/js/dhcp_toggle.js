@@ -61,8 +61,9 @@
             const networkAddressParts = lanIpParts.map((part, i) => part & subnetMaskParts[i]);
             const invertedSubnetMaskParts = subnetMaskParts.map(part => ~part & 255);
             const broadcastAddressParts = networkAddressParts.map((part, i) => part | invertedSubnetMaskParts[i]);
-            const dhcpStart = networkAddressParts.slice(0, 3).concat(networkAddressParts[3] + 1).join('.');
-            const dhcpEnd = broadcastAddressParts.slice(0, 3).concat(broadcastAddressParts[3] - 1).join('.');
+            const dhcpStart = networkAddressParts.slice(0, 3).concat(100).join('.');
+            const dhcpEnd = networkAddressParts.slice(0, 3).concat(200).join('.');
+            
             if (!dhcpStartField.value || dhcpStartField.value.trim() === '') {
                 dhcpStartField.value = dhcpStart;
             }

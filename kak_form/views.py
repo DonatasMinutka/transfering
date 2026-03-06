@@ -8,17 +8,19 @@ class KakDeviceEditView(generic.ObjectEditView):
     queryset = Device.objects.all()
     form = forms.CustomDeviceForm
 
+class KakDeviceView(generic.ObjectView):
+    queryset = Device.objects.all()
+    template_name = 'kak_form/device_detail_custom.html' 
 
+
+class DefaultDeviceView(generic.ObjectView):
+    queryset = Device.objects.all()
+
+    
 class KakSiteCreateView(generic.ObjectEditView):
     queryset = Site.objects.all()
     form = forms.NewSiteForm
     template_name = 'kak_form/add_site.html'
-
-class KakSiteCreateView(generic.ObjectEditView):
-    queryset = Site.objects.all()
-    form = forms.NewSiteForm
-    template_name = 'kak_form/edit_site.html'
-
 
 
 class KakTenantCreateView(generic.ObjectEditView):

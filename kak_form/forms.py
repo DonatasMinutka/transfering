@@ -276,8 +276,12 @@ class CustomDeviceForm(forms.ModelForm):
         service = cleaned_data.get('Services')
         device_type = cleaned_data.get('device_type')
         service_required_fields = {
-            'capn': ['CAPN_Address'],
-            'wan': ['Given_WAN_Address']
+            'capn': ['CAPN_Address', 'Given_WAN_Address'],
+            'internet': ['Given_WAN_Address'],  
+            'isop': ['Given_WAN_Address'],
+            'wan_failover': ['Given_WAN_Address'],
+            'nkdps': ['Given_WAN_Address'],
+            'lte_5g_nokia': []
         }
 
         all_conditional_fields = {'CAPN_Address','Given_WAN_Address'}

@@ -1,0 +1,98 @@
+{% extends 'dcim/device/base.html' %}
+{% load render_table from django_tables2 %}
+{% load plugins %}
+{% load helpers %}
+
+{% block title %}{{ object.name }}{% endblock %}
+
+{% block content %}
+<div id="content-wrapper">
+
+  <div class="row">
+    <div class="col-md-6">
+
+
+      <div class="panel panel-default" style="border: 1px solid #3d4d5c; border-radius: 4px;">
+        <div class="panel-heading" style="background-color: #2c3e50; color: white; padding: 12px; border-bottom: 1px solid #3d4d5c; border-radius: 4px 4px 0 0;">
+          <strong>Device</strong>
+        </div>
+        <table class="table table-hover" style="margin-bottom: 0; border-radius: 0 0 4px 4px;">
+          <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Site</strong></td>
+            <td style="padding: 10px;"><a href="{% url 'dcim:site' pk=object.site.pk %}">{{ object.site }}</a></td>
+          </tr>
+          {% if object.location %}
+          <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Location</strong></td>
+            <td style="padding: 10px;"><a href="{% url 'dcim:location' pk=object.location.pk %}">{{ object.location }}</a></td>
+          </tr>
+          {% endif %}
+          {% if object.rack %}
+          <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Rack</strong></td>
+            <td style="padding: 10px;"><a href="{% url 'dcim:rack' pk=object.rack.pk %}">{{ object.rack }}</a></td>
+          </tr>
+          {% endif %}
+
+          {% if object.tenant %}
+          <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Tenant</strong></td>
+            <td style="padding: 10px;"><a href="{% url 'tenancy:tenant' pk=object.tenant.pk %}">{{ object.tenant }}</a></td>
+          </tr>
+          {% endif %}
+          {% if object.device_type %}
+          <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Type</strong></td>
+            <td style="padding: 10px;"><a href="{% url 'dcim:devicetype' pk=object.device_type.pk %}">{{ object.device_type }}</a></td>
+          </tr>
+          {% endif %}
+          {% if object.config_template %}
+          <tr>
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Config Template</strong></td>
+            <td style="padding: 10px;"><a href="{% url 'extras:configtemplate' pk=object.config_template.pk %}">{{ object.config_template }}</a></td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+    </div>
+
+    
+    <div class="col-md-6">
+      <div class="panel panel-default" style="border: 1px solid #3d4d5c; border-radius: 4px;">
+        <div class="panel-heading" style="background-color: #2c3e50; color: white; padding: 12px; border-bottom: 1px solid #3d4d5c; border-radius: 4px 4px 0 0;">
+          <strong>Management</strong>
+        </div>
+        <table class="table table-hover" style="margin-bottom: 0;">
+          <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Status</strong></td>
+            <td style="padding: 10px;">
+              <span class="badge" style="background-color: {{ object.get_status_color }}">
+                {{ object.get_status_display }}
+              </span>
+            </td>
+          </tr>
+          {% if object.role %}
+          <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Role</strong></td>
+            <td style="padding: 10px;"><a href="{% url 'dcim:device_list' %}?role_id={{ object.role.pk }}">{{ object.role }}</a></td>
+          </tr>
+          {% endif %}
+          {% if object.primary_ip4 %}
+          <tr>
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Primary IPv4</strong></td>
+            <td style="padding: 10px;">
+              {% if object.primary_ip4.pk %}
+                <a href="{% url 'ipam:ipaddress' pk=object.primary_ip4.pk %}">{{ object.primary_ip4.address }}</a>
+              {% else %}
+                {{ object.primary_ip4.address }}
+              {% endif %}
+            </td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
