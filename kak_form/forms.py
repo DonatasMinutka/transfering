@@ -333,8 +333,11 @@ class CustomDeviceForm(forms.ModelForm):
 
             if not device.custom_field_data:
                 device.custom_field_data = {}
-            
+            last_part_dhcp_start = dhcp_start.split(".")[-1]
+            last_part_dhcp_end= dhcp_end.split(".")[-1]
             device.custom_field_data['PID'] = self.cleaned_data.get('Service_ID', '')
+            device.custom_field_data['DHCP'] = f"{last_part_dhcp_start}-{last_part_dhcp_end}"
+            device.custom_field_data['LAN_IP'] = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
             device.save()
             service = device.local_context_data.get('KAK_DATA', {}).get('services', '')
             new_device_type = self.cleaned_data.get('device_type')

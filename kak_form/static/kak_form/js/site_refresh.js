@@ -195,7 +195,6 @@ function refreshSiteDropdown() {
 
                 if (siteToSelect) {
                     ts.setValue(siteToSelect);
-                    console.log('Selected site:', siteToSelect);
                 }
                 
                 if (editingSiteId) {

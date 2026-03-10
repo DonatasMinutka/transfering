@@ -120,7 +120,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
                         if (tenantToSelect) {
                             ts.setValue(tenantToSelect);
-                            console.log('Selected tenant:', tenantToSelect);
                         }
                         
                         if (editingTenantId) {

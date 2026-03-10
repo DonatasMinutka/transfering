@@ -9,6 +9,5 @@ urlpatterns = [
     path('add_site/', views.KakSiteCreateView.as_view(), name='add_site'), 
     path('site/<int:pk>/edit/', views.KakSiteCreateView.as_view(), name='edit_site'), 
     path('add_tenant/', views.KakTenantCreateView.as_view(), name='add_tenant'), 
-    path('tenant/<int:pk>/edit/', views.KakTenantCreateView.as_view(), name='edit_tenant'), 
-
+    path('tenant/<int:pk>/edit/', views.KakTenantCreateView.as_view(), name='edit_tenant'),     
 ]

@@ -145,8 +145,11 @@ function updateName() {
     tenant = removeLithuanianDiacritics(tenant);
 
     if (count(tenant) > 1) {
+        const legalForms = ['UAB', 'AB', 'MB', 'VšĮ', 'IĮ', 'ŽŪB', 'VĮ'];
         tenant = tenant.trim()
+            .replace(/[-,]/g, ' ')  
             .split(/\s+/)
+            .filter(word => !legalForms.includes(word.toUpperCase()))
             .map(word => word[0].toUpperCase())
             .join('');
     } else if (tenant.length > 10) {
