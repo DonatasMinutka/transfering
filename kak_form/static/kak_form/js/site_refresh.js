@@ -206,7 +206,6 @@ function refreshSiteDropdown() {
             showSuccessMessage('Site list updated.');
         })
         .catch(err => {
-            console.error('Fetch error:', err);
             showErrorMessage('Failed to refresh site list');
         });
 }
