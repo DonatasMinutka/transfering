@@ -32,37 +32,56 @@
             </td>
           </tr>
           {% endif %}
+          {% if object.role %}
+            <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;">Role</td>
+            <td style="padding: 10px;"><a href="{% url 'dcim:devicerole' pk=object.role.pk %}">{{ object.role }}</a></td>
+            </tr>
+        {% endif %}
         {% if object.primary_ip4 %}
         <tr style="border-bottom: 1px solid #3d4d5c;">
         <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Primary IPv4</strong></td>
         <td style="padding: 10px;"><a href="{% url 'ipam:ipaddress' pk=object.primary_ip4.pk %}">{{ object.primary_ip4 }}</a></td>
         </tr>
         {% endif %}
-          {% if object.device_type %}
-          <tr style="border-bottom: 1px solid #3d4d5c;">
-            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Type</strong></td>
-            <td style="padding: 10px;">
-              {% if object.device_type.manufacturer %}
-                <a href="{% url 'dcim:manufacturer' pk=object.device_type.manufacturer.pk %}">{{ object.device_type.manufacturer }}</a> / 
-              {% endif %}
-              <a href="{% url 'dcim:devicetype' pk=object.device_type.pk %}">{{ object.device_type }}</a>
-            </td>
-          </tr>
+         {% if  object.tags.all %}
+<tr style="border-bottom: 1px solid #3d4d5c;">
+<td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Tags</strong></td>
+<td style="padding: 10px;">
+  {% for tag in object.tags.all %}
+    <a href="/extras/tags/{{ tag.pk }}/" style="margin-right: 5px; text-decoration: none; color: #007bff;">
+      {{ tag.name }}
+    </a>
+  {% endfor %}
+</td>
+</tr>
+{% endif %}
+        {% if object.device_type %}
+        <tr style="border-bottom: 1px solid #3d4d5c;">
+          <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Type</strong></td>
+          <td style="padding: 10px;">
+          {% if object.device_type.manufacturer %}
+          <a href="{% url 'dcim:manufacturer' pk=object.device_type.manufacturer.pk %}">{{ object.device_type.manufacturer }}</a> / 
           {% endif %}
-          {% if object.device_type.description %}
+          <a href="{% url 'dcim:devicetype' pk=object.device_type.pk %}">{{ object.device_type }}</a>
+          </td>
+          </tr>
+        {% endif %}
+        {% if object.device_type.description %}
           <tr>
             <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Device Description</strong></td>
             <td style="padding: 10px;">{{object.device_type.description}}</a></td>
           </tr>
-          {% endif %}
-          {% if object.config_template %}
+        {% endif %}
+        {% if object.config_template %}
           <tr>
             <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Config Template</strong></td>
             <td style="padding: 10px;"><a href="{% url 'extras:configtemplate' pk=object.config_template.pk %}">{{ object.config_template }}</a></td>
           </tr>
-          {% endif %}
+        {% endif %}
         </table>
       </div>
+
     </div>
     <div class="col-md-6">
       <div class="panel panel-default" style="border: 1px solid #3d4d5c;margin-bottom: 20px; border-radius: 4px;">
@@ -80,6 +99,12 @@
           <tr style="border-bottom: 1px solid #3d4d5c;">
             <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>PID</strong></td>
             <td style="padding: 10px;">{{ object.custom_field_data.PID }}</td>
+          </tr>
+          {% endif %}
+          {% if object.custom_field_data.SPEED_MBPS %}
+          <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>SPEED MBPS</strong></td>
+            <td style="padding: 10px;">{{ object.custom_field_data.SPEED_MBPS}}</td>
           </tr>
           {% endif %}
         </table>

@@ -131,7 +131,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     showSuccessMessage('Tenant list updated.');
                 })
                 .catch(err => {
-                    console.error('Fetch error:', err);
                     showErrorMessage('Failed to refresh Tenant list');
                 });
 }
