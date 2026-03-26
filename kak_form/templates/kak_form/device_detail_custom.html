@@ -98,7 +98,9 @@
           {% if object.custom_field_data.PID %}
           <tr style="border-bottom: 1px solid #3d4d5c;">
             <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>PID</strong></td>
-            <td style="padding: 10px;">{{ object.custom_field_data.PID }}</td>
+            <td style="padding: 10px;">
+              <a href="http://tds/configure/?c_menu=c_ldap&c_phone={{ object.custom_field_data.PID }}">{{ object.custom_field_data.PID }}</a>
+            </td>
           </tr>
           {% endif %}
           {% if object.custom_field_data.SPEED_MBPS %}
@@ -133,13 +135,17 @@
           {% if data.lan %}
             <tr style="border-bottom: 1px solid #3d4d5c;">
               <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>LAN IP Address and Subnet Mask</strong></td>
-              <td style="padding: 10px;">{{ data.lan }}</td>
+              <td style="padding: 10px;">
+                <a href="/ipam/ip-addresses/?address={{ data.lan }}">{{ data.lan }}</a>
+              </td>
             </tr>
           {% endif %}
           {% if data.service_id %}
             <tr style="border-bottom: 1px solid #3d4d5c;">
               <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Service ID</strong></td>
-              <td style="padding: 10px;">{{ data.service_id }}</td>
+              <td style="padding: 10px;">
+                <a href="http://tds/configure/?c_menu=c_ldap&c_phone={{ data.service_id }}">{{ data.service_id }}</a>
+              </td>
             </tr>
           {% endif %}
           {% if data.bgp_neighbor_ip_address %}

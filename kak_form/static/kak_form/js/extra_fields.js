@@ -27,6 +27,8 @@ document.addEventListener('DOMContentLoaded', function() {
             'wan_failover': ['enable_dhcp','wan'],
             'nkdps': ['enable_dhcp','wan'],
             'lte_5g_nokia':['enable_dhcp'],
+            '4g':['enable_dhcp','wan'],
+            '4g_apn':['capn', 'enable_dhcp','wan'],
         };
         
         let fieldsToShow = baseMapping[service] || [];

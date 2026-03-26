@@ -46,16 +46,14 @@
                     <td>{{ data.wan_ip }}</td>
                 </tr>
                 {% endif %}
-                {% if data.dhcp_start %}
+                {% if data.dhcp_ranges %}
                 <tr>
-                    <th scope="row">DHCP Start Address</th>
-                    <td>{{ data.dhcp_start }}</td>
-                </tr>
-                {% endif %}
-                {% if data.dhcp_end %}
-                <tr>
-                    <th scope="row">DHCP End Address</th>
-                    <td>{{ data.dhcp_end }}</td>
+                    <th scope="row">DHCP Ranges</th>
+                    <td>
+                        {% for rng in data.dhcp_ranges %}
+                            {{ rng }}{% if not forloop.last %}<br>{% endif %}
+                        {% endfor %}
+                    </td>
                 </tr>
                 {% endif %}
                 {% if data.enable_dhcp != None %}

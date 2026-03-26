@@ -17,7 +17,6 @@ import logging
 from django.utils.translation import gettext_lazy as _
 
 
-
 import sys
 logger = logging.getLogger(__name__)
 
@@ -46,6 +45,8 @@ class CustomDeviceForm(forms.ModelForm):
         ('nkdps', 'NKDPS'),
         ('wan_failover', 'WAN FAILOVER'),
         ('lte_5g_nokia', 'LTE 5G From Nokia'),
+        ('4g', '4G'),
+        ('4g_apn', '4G APN'),
     ]
 
     Services = forms.ChoiceField(choices=SERVICE_CHOICES, required=True, label="Services / Paslaugos", widget=forms.Select(attrs={'class': 'form-control'}))
@@ -53,8 +54,7 @@ class CustomDeviceForm(forms.ModelForm):
     LAN_IP_Address_And_Subnet_Mask = forms.CharField(max_length=50, required=True, validators=[validate_ipv4_cidr], widget=forms.TextInput(attrs={'placeholder': '192.168.1.1/32','class': 'form-control'}), label="LAN IP Address Ir Subnet")
     Service_ID = forms.CharField(max_length=50, required=True, widget=forms.TextInput(attrs={'placeholder': '********','class': 'form-control'}), label="PID")
     Enable_DHCP = forms.BooleanField(required=False, label="Enable DHCP", widget=forms.CheckboxInput(attrs={'class': 'form-check-input', 'id': 'enable_dhcp_checkbox'}))
-    DHCP_Start_Address = forms.CharField(max_length=50, required=False, validators=[validate_ipv4], widget=forms.TextInput(attrs={'class': 'form-control dhcp-field'}), label="DHCP Start Address")
-    DHCP_End_Address = forms.CharField(max_length=50, required=False, validators=[validate_ipv4], widget=forms.TextInput(attrs={'class': 'form-control dhcp-field'}), label="DHCP End Address")
+    DHCP_Ranges = forms.CharField(required=False, widget=forms.HiddenInput(attrs={'id': 'id_dhcp_ranges'}), label="DHCP Ranges")
     CAPN_Address = forms.CharField(max_length=50, required=True, widget=forms.TextInput(attrs={'placeholder': '192.168.1.1','class': 'form-control'}), label="CAPN Address")
     
     class Meta:
@@ -91,15 +91,17 @@ class CustomDeviceForm(forms.ModelForm):
             return
         self._original_service = None
         self._original_device_type = None
+        self._original_lan = None
+        self._original_wan = None
         if self.instance and self.instance.pk:
             if self.instance.local_context_data and 'KAK_DATA' in self.instance.local_context_data:
                 kak_data = self.instance.local_context_data['KAK_DATA']
                 self._original_service = kak_data.get('services', '')
-
+                self._original_lan = kak_data.get('lan', '')
+                self._original_wan = kak_data.get('wan', '')
             if self.instance.device_type:
                 self._original_device_type = self.instance.device_type
-    
-    
+                
         self.fields['name'].help_text = mark_safe(
         '<script src="/static/kak_form/js/auto_name.js"></script>'
         )   
@@ -123,7 +125,7 @@ class CustomDeviceForm(forms.ModelForm):
         self.fields['tenant'].help_text = mark_safe(
             '<script src="/static/kak_form/js/tenant_refresh.js"></script>'
         )
-        self.fields['DHCP_End_Address'].help_text = mark_safe(
+        self.fields['Enable_DHCP'].help_text = mark_safe(
             '<script src="/static/kak_form/js/dhcp_toggle.js"></script>'
         )
         self.fields['Services'].help_text = mark_safe(
@@ -138,8 +140,15 @@ class CustomDeviceForm(forms.ModelForm):
                 self.fields['Given_WAN_Address'].initial = kak_data.get('wan', '')
                 self.fields['LAN_IP_Address_And_Subnet_Mask'].initial = kak_data.get('lan', '')
                 self.fields['Service_ID'].initial = kak_data.get('service_id', '')
-                self.fields['DHCP_Start_Address'].initial = kak_data.get('dhcp_start', '')
-                self.fields['DHCP_End_Address'].initial = kak_data.get('dhcp_end', '')
+                dhcp_ranges = kak_data.get('dhcp_ranges', '')
+                if isinstance(dhcp_ranges, list):
+                    dhcp_ranges = ';'.join(dhcp_ranges)
+                if not dhcp_ranges:
+                    old_start = kak_data.get('dhcp_start', '')
+                    old_end = kak_data.get('dhcp_end', '')
+                    if old_start and old_end:
+                        dhcp_ranges = f"{old_start}-{old_end}"
+                self.fields['DHCP_Ranges'].initial = dhcp_ranges
 
     def _get_auto_config_template(self):
         device = self.instance
@@ -207,26 +216,33 @@ class CustomDeviceForm(forms.ModelForm):
         site = cleaned_data.get('site')
         device_type = cleaned_data.get('device_type')
         role = cleaned_data.get('role')
-        dhcp_start = cleaned_data.get('DHCP_Start_Address')
-        dhcp_end = cleaned_data.get('DHCP_End_Address')
-        enable_dhcp = cleaned_data.get('Enable_DHCP')
         config_template = cleaned_data.get('config_template')
+        dhcp_ranges_str = cleaned_data.get('DHCP_Ranges', '')
+        enable_dhcp = cleaned_data.get('Enable_DHCP')
 
-
+        if enable_dhcp and dhcp_ranges_str:
+            ranges = [r.strip() for r in dhcp_ranges_str.split(';') if r.strip()]
+            if len(ranges) > 10:
+                raise forms.ValidationError("A maximum of 10 DHCP ranges is allowed.")
+            for rng in ranges:
+                if '-' not in rng:
+                    raise forms.ValidationError(f"Invalid DHCP range format: '{rng}'. Expected format: 192.168.1.100-192.168.1.200")
+                start, end = rng.split('-', 1)
+                start, end = start.strip(), end.strip()
+                try:
+                    ipaddress.IPv4Address(start)
+                    ipaddress.IPv4Address(end)
+                except ValueError:
+                    raise forms.ValidationError(f"Invalid IP address in DHCP range: '{rng}'")
+                if not self._check_dhcp_range(lan_ip, start, end):
+                    raise forms.ValidationError(f"DHCP range '{rng}' is outside the LAN subnet.")
 
         if name:
             existing_device = Device.objects.filter(name=name)
             if self.instance.pk:
                 existing_device = existing_device.exclude(pk=self.instance.pk)
-            
             if existing_device.exists():
-                
                 raise forms.ValidationError(f'A device with name "{name}" already exists.')
-
-        if enable_dhcp:
-            if dhcp_start and dhcp_end:
-                if not self._check_dhcp_range(lan_ip, dhcp_start, dhcp_end):
-                    raise forms.ValidationError("DHCP range is not correct.")
 
         if lan_ip_no_mask and wan_ip:
             if lan_ip_no_mask == wan_ip:
@@ -281,6 +297,8 @@ class CustomDeviceForm(forms.ModelForm):
             'isop': ['Given_WAN_Address'],
             'wan_failover': ['Given_WAN_Address'],
             'nkdps': ['Given_WAN_Address'],
+            '4g_apn': ['CAPN_Address', 'Given_WAN_Address'],
+            '4g': ['Given_WAN_Address'],
             'lte_5g_nokia': []
         }
 
@@ -302,9 +320,9 @@ class CustomDeviceForm(forms.ModelForm):
                 
         return cleaned_data
 
-    def save(self, commit=True): 
+    def save(self, commit=True):
         device = super().save(commit=False)
-        
+
         if not device.config_template:
             auto_template = self._get_auto_config_template()
             if auto_template:
@@ -312,11 +330,10 @@ class CustomDeviceForm(forms.ModelForm):
 
         if commit:
             device.save()
-            
+
             enable_dhcp = self.cleaned_data.get('Enable_DHCP', False)
-            dhcp_start = self.cleaned_data.get('DHCP_Start_Address', '') if enable_dhcp else ''
-            dhcp_end = self.cleaned_data.get('DHCP_End_Address', '') if enable_dhcp else ''
-            
+            dhcp_ranges_str = self.cleaned_data.get('DHCP_Ranges', '') if enable_dhcp else ''
+
             if not device.local_context_data:
                 device.local_context_data = {}
 
@@ -327,22 +344,51 @@ class CustomDeviceForm(forms.ModelForm):
                 'service_id': self.cleaned_data.get('Service_ID', ''),
                 'capn': self.cleaned_data.get('CAPN_Address', ''),
                 'enable_dhcp': enable_dhcp,
-                'dhcp_start': dhcp_start,
-                'dhcp_end': dhcp_end
+                'dhcp_ranges': [r.strip() for r in dhcp_ranges_str.split(';') if r.strip()] if dhcp_ranges_str else [],
             }
 
             if not device.custom_field_data:
                 device.custom_field_data = {}
-            last_part_dhcp_start = dhcp_start.split(".")[-1]
-            last_part_dhcp_end= dhcp_end.split(".")[-1]
             device.custom_field_data['PID'] = self.cleaned_data.get('Service_ID', '')
-            device.custom_field_data['DHCP'] = f"{last_part_dhcp_start}-{last_part_dhcp_end}"
-            device.custom_field_data['LAN_IP'] = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
+
+            # Custom field: short format "100-200, 50-60" (last octet only)
+            if dhcp_ranges_str:
+                short_parts = []
+                for rng in dhcp_ranges_str.split(';'):
+                    rng = rng.strip()
+                    if '-' in rng:
+                        start, end = rng.split('-', 1)
+                        short_parts.append(f"{start.strip().split('.')[-1]}-{end.strip().split('.')[-1]}")
+                device.custom_field_data['DHCP'] = ', '.join(short_parts)
+            else:
+                device.custom_field_data['DHCP'] = ''
+
+            # Save KAK_DATA and custom fields first (LAN_IP set after interfaces are created)
             device.save()
+
+            # Trigger interface recreation if service, device type, LAN, or WAN changed
             service = device.local_context_data.get('KAK_DATA', {}).get('services', '')
             new_device_type = self.cleaned_data.get('device_type')
-            if service!=self._original_service or new_device_type!=self._original_device_type:
+            new_lan = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
+            new_wan = self.cleaned_data.get('Given_WAN_Address', '')
+
+            if (service != self._original_service
+                    or new_device_type != self._original_device_type
+                    or new_lan != self._original_lan
+                    or new_wan != self._original_wan):
                 self._create_interfaces_from_config(device)
+
+            # Refresh from DB so primary_ip4 set by _create_interfaces_from_config is not overwritten
+            device.refresh_from_db()
+
+            # NOW look up LAN_IP — IPAddress object exists after _create_interfaces_from_config
+            lan_ip_str = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
+            if lan_ip_str:
+                ip_obj = IPAddress.objects.filter(address=lan_ip_str).first()
+                device.custom_field_data['LAN_IP'] = ip_obj.pk if ip_obj else None
+            else:
+                device.custom_field_data['LAN_IP'] = None
+            device.save()
 
         return device
 
@@ -482,6 +528,34 @@ class CustomDeviceForm(forms.ModelForm):
         calculated_wan_and_bgp_ip = self._calculate_wan_and_bgp_ip(wan_ip)
         wan_ip_60f_nkdps = self._wan_ip_60f_nkdps(wan_ip)
         interfaces = []
+        if service == '4g':
+            if 'c921-4pltegb' in device_model:
+                interfaces = [
+                    {'name': 'Tunnel0', 'type': 'virtual', 'enabled': True},
+                    {'name': 'Cellular0', 'type': '4g', 'enabled': True},
+                    {'name': 'GigabitEthernet0', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'GigabitEthernet1', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'GigabitEthernet2', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'GigabitEthernet3', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'GigabitEthernet4', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'GigabitEthernet4.4', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'GigabitEthernet5', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'Vlan1', 'type': '1000base-t', 'enabled': True, 'ip': lan_ip},
+                ]
+        if service == '4g_apn':
+            if 'd53g_apn' in device_model:
+                interfaces = [
+                {'name': 'Tunnel0', 'type': 'virtual', 'enabled': True},
+                {'name': 'Cellular0', 'type': '4g', 'enabled': True},
+                {'name': 'bridge1', 'type': 'bridge', 'enabled': True, 'ip': lan_ip, 'is_primary': True},
+                {'name': 'lte1', 'type': 'lte', 'enabled': True, 'ip': wan_ip}, 
+                {'name': 'ether1', 'bridge': 'bridge1', 'type': '1000base-t', 'enabled': True}, 
+                {'name': 'ether2', 'bridge': 'bridge1', 'type': '1000base-t', 'enabled': True},  
+                {'name': 'ether3', 'bridge': 'bridge1', 'type': '1000base-t', 'enabled': True},
+                {'name': 'ether4', 'bridge': 'bridge1', 'type': '1000base-t', 'enabled': True},  
+                {'name': 'wlan1', 'type': 'virtual', 'enabled': True},
+                {'name': 'wlan2', 'type': 'virtual', 'enabled': True},
+                ]
         if service == 'capn':
             if 'd53g' in device_model:
                 interfaces = [
@@ -494,6 +568,7 @@ class CustomDeviceForm(forms.ModelForm):
                 {'name': 'wlan1', 'type': 'virtual', 'enabled': True},
                 {'name': 'wlan2', 'type': 'virtual', 'enabled': True},
                 ]
+
     
         elif service == 'internet':
             if '50g' in device_model:
@@ -649,11 +724,11 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'GigabitEthernet2', 'type': '1000base-t', 'enabled': True},
                     {'name': 'GigabitEthernet3', 'type': '1000base-t', 'enabled': True},
                     {'name': 'GigabitEthernet4', 'type': '1000base-t', 'enabled': True},
-                    {'name': 'GigabitEthernet4.4', 'type': '1000base-t', 'enabled': True},
-                    {'name': 'GigabitEthernet5', 'type': '1000base-t', 'enabled': True,'ip': f'{calculated_wan_and_bgp_ip}/24',  'is_primary': True},
+                    {'name': 'GigabitEthernet4.4', 'type': '1000base-t', 'enabled': True,'ip': f'{calculated_wan_and_bgp_ip}/24',  'is_primary': True},
+                    {'name': 'GigabitEthernet5', 'type': '1000base-t', 'enabled': True},
                     {'name': 'Vlan1', 'type': '1000base-t', 'enabled': True, 'ip': lan_ip},
                 ]
-
+   
             elif '60f' in device_model:
                 interfaces = [
                     {'name': 'wan1', 'type': '1000base-t', 'enabled': True},
