@@ -109,6 +109,17 @@
             <td style="padding: 10px;">{{ object.custom_field_data.SPEED_MBPS}}</td>
           </tr>
           {% endif %}
+          {% if Additional_LAN_IP %}
+          <tr style="border-bottom: 1px solid #3d4d5c;">
+            <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Additional LAN IP</strong></td>
+            <td style="padding: 10px;">
+              {% for ip in Additional_LAN_IP %}
+                <a href="{{ ip.get_absolute_url }}">{{ ip.address }}</a>{% if not forloop.last %}, {% endif %}
+              {% endfor %}
+            </td>
+          </tr>
+          {% endif %}
+         
         </table>
       </div>
     </div>
@@ -160,22 +171,44 @@
               <td style="padding: 10px;">{{ data.wan_ip }}</td>
             </tr>
           {% endif %}
-          {% if data.dhcp_start  %}
+          {% if data.tunnel %}
             <tr style="border-bottom: 1px solid #3d4d5c;">
-              <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>DHCP Start Address</strong></td>
-              <td style="padding: 10px;">{{ data.dhcp_start  }}</td>
+              <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Tunnel</strong></td>
+              <td style="padding: 10px;">{{ data.tunnel }}</td>
             </tr>
           {% endif %}
-          {% if data.dhcp_end  %}
+            {% if data.celluar %}
             <tr style="border-bottom: 1px solid #3d4d5c;">
-              <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>DHCP END Address</strong></td>
-              <td style="padding: 10px;">{{ data.dhcp_end  }}</td>
+              <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Cellular</strong></td>
+              <td style="padding: 10px;">{{ data.cellular }}</td>
             </tr>
+          {% endif %}
+          {% if data.dhcp_ranges %}
+                <tr>
+                    <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>DHCP Ranges</strong></td>
+                    <td style="padding: 10px;">
+                        {% for rng in data.dhcp_ranges %}
+                            {{ rng }}{% if not forloop.last %}<br>{% endif %}
+                        {% endfor %}
+                    </td>
+                </tr>
           {% endif %}
           {% if data.enable_dhcp  %}
             <tr style="border-bottom: 1px solid #3d4d5c;">
               <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Is DHCP Enabled</strong></td>
               <td style="padding: 10px;">{{ data.enable_dhcp  }}</td>
+            </tr>
+          {% endif %}
+            {% if data.enable_dhcp_helper  %}
+            <tr style="border-bottom: 1px solid #3d4d5c;">
+              <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>Is DHCP Helper Enabled</strong></td>
+              <td style="padding: 10px;">{{ data.enable_dhcp_helper }}</td>
+            </tr>
+          {% endif %}
+          {% if data.dhcp_helper  %}
+            <tr style="border-bottom: 1px solid #3d4d5c;">
+              <td style="width: 30%; padding: 10px; font-weight: bold;"><strong>DHCP Helper</strong></td>
+              <td style="padding: 10px;">{{ data.dhcp_helper  }}</td>
             </tr>
           {% endif %}
         </table>

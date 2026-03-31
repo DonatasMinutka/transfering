@@ -16,6 +16,18 @@
                     <td>{{ data.capn }}</td>
                 </tr>
                 {% endif %}
+                {% if data.tunnel %}
+                <tr>
+                    <th scope="row">Tunnel</th>
+                    <td>{{ data.tunnel }}</td>
+                </tr>
+                {% endif %}
+                {% if data.cellular %}
+                <tr>
+                    <th scope="row">Cellular</th>
+                    <td>{{ data.cellular }}</td>
+                </tr>
+                {% endif %}
                 {% if data.wan %}
                 <tr>
                     <th scope="row">Given WAN Address</th>
@@ -44,6 +56,12 @@
                 <tr>
                     <th scope="row">WAN IP Address</th>
                     <td>{{ data.wan_ip }}</td>
+                </tr>
+                {% endif %}
+                {% if data.dhcp_helper %}
+                <tr>
+                    <th scope="row">DHCP Helper</th>
+                    <td>{{ data.dhcp_helper }}</td>
                 </tr>
                 {% endif %}
                 {% if data.dhcp_ranges %}
