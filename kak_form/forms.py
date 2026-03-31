@@ -511,6 +511,7 @@ class CustomDeviceForm(forms.ModelForm):
 
         lan_ip_str = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
         ip_obj = IPAddress.objects.filter(address=lan_ip_str).first() if lan_ip_str else None
+        device.custom_field_data["DHCP_Helper"] = dhcp_helper_str
         device.custom_field_data['LAN_IP'] = int(ip_obj.pk) if ip_obj else None
         device.custom_field_data['Additional_LAN_IP'] = [int(pk) for pk in new_additional_pks]
 
