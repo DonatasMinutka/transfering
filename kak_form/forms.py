@@ -12,6 +12,8 @@ from ipam.models import IPAddress, VRF
 import ipaddress
 from tenancy.models import TenantGroup
 import logging
+from extras.models import Tag
+
 
 logger = logging.getLogger(__name__)
 
@@ -139,11 +141,16 @@ class CustomDeviceForm(forms.ModelForm):
             query_params={'tag': '$Services'},
             required=True,
         )
-
+        self.fields['name'].widget.attrs.update({
+            'id': 'id_name',
+            'class': 'form-control',
+            'readonly': True,
+            'style': 'background-color: #e9ecef; cursor: not-allowed;',
+        })
         self.fields['name'].widget.attrs.update({'id': 'id_name', 'class': 'form-control'})
         self.fields['tenant'].label = 'Tenant / Imone'
         self.fields['site'].label = 'Site / Vieta'
-        self.fields['name'].label = 'Name / Pavadinimas'
+        self.fields['name'].label = 'Name / Pavadinimas (Sugeneruojamas)'
         self.fields['device_type'].label = 'Device Type / Modelis'
         self.fields['device_type'].widget.attrs['id'] = 'id_device_type'
         self.fields['device_type'].widget.attrs['data-custom-display'] = 'manufacturer-model'
@@ -282,7 +289,6 @@ class CustomDeviceForm(forms.ModelForm):
         return first_host <= start <= last_host and first_host <= end <= last_host
 
     def _parse_additional_lan_ips(self, raw):
-        """Return a clean list of CIDR strings from the hidden semicolon-separated field."""
         if not raw:
             return []
         return [ip.strip() for ip in raw.split(';') if ip.strip()]
@@ -429,9 +435,13 @@ class CustomDeviceForm(forms.ModelForm):
 
         if not commit:
             return device
-
+       
         device.save()
-
+        try:
+            kak_tag = Tag.objects.get(slug='kak-form')
+            device.tags.add(kak_tag)
+        except Tag.DoesNotExist:
+            pass  
         enable_dhcp = self.cleaned_data.get('Enable_DHCP', False)
         dhcp_ranges_str = self.cleaned_data.get('DHCP_Ranges', '') if enable_dhcp else ''
         enable_dhcp_helper = self.cleaned_data.get('Enable_DHCP_HELPER', False)
@@ -761,7 +771,7 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'ether5',  'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'serial0', 'type': 'other',      'enabled': True},
                 ]
-            elif 'fortigate 60f internet' in device_model:
+            elif '60f internet' in device_model:
                 interfaces = [
                     {'name': 'wan1',      'type': '1000base-t', 'enabled': True},
                     {'name': 'wan2',      'type': '1000base-t', 'enabled': True,  'description': 'WAN interface (DHCP)'},
@@ -909,7 +919,7 @@ class NewTenantForm(TenantForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        allowed_fields = {'name', 'slug'}
+        allowed_fields = {'name', 'slug', 'cf_Imones_kodas', 'cf_Kliento_ID', 'cf_kliento_kontaktinis_asmuo', 'cf_paslaugu_gavejo_id',''}
         for field_name in list(self.fields.keys()):
             if field_name not in allowed_fields:
                 del self.fields[field_name]
@@ -925,7 +935,7 @@ class NewTenantForm(TenantForm):
 
     def _get_cpe_group(self):
         try:
-            return TenantGroup.objects.get(name='CPE')
+            return TenantGroup.objects.get(name='DPS verslo klientai')
         except TenantGroup.DoesNotExist:
             return None
 
@@ -934,6 +944,13 @@ class NewTenantForm(TenantForm):
         cpe_group = self._get_cpe_group()
         if not cpe_group:
             return cleaned_data
+        imones_kodas = self.data.get('cf_Imones_kodas')
+
+        if imones_kodas:
+            if not str(imones_kodas).isdigit():
+                self.add_error('cf_Imones_kodas', 'Įmonės kodas tik skaitmenys')
+            elif len(str(imones_kodas)) != 9:
+                self.add_error('cf_Imones_kodas', 'Įmonės kodas turi būti 9 skaičiai')
 
         slug = self.data.get('slug')
         name = self.data.get('name')
