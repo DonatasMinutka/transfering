@@ -149,6 +149,7 @@ class CustomDeviceForm(forms.ModelForm):
         })
         self.fields['name'].widget.attrs.update({'id': 'id_name', 'class': 'form-control'})
         self.fields['tenant'].label = 'Tenant / Imone'
+        self.fields['tenant'].required = True
         self.fields['site'].label = 'Site / Vieta'
         self.fields['name'].label = 'Name / Pavadinimas (Sugeneruojamas)'
         self.fields['device_type'].label = 'Device Type / Modelis'
@@ -309,7 +310,14 @@ class CustomDeviceForm(forms.ModelForm):
         enable_dhcp = cleaned_data.get('Enable_DHCP')
         dhcp_ranges_str = cleaned_data.get('DHCP_Ranges', '')
         additional_lan_raw = cleaned_data.get('Additional_LAN_IPs', '')
-
+        service_id = cleaned_data.get('Service_ID')
+        if service_id:
+            qs = Device.objects.filter(custom_field_data__PID=service_id)
+            if self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise forms.ValidationError(f'A device with PID "{service_id}" already exists.')
+            return cleaned_data
         additional_lan_ips = self._parse_additional_lan_ips(additional_lan_raw)
         for ip_cidr in additional_lan_ips:
             if '/' not in ip_cidr:
@@ -484,7 +492,7 @@ class CustomDeviceForm(forms.ModelForm):
 
         if not device.custom_field_data:
             device.custom_field_data = {}
-        device.custom_field_data['PID'] = self.cleaned_data.get('Service_ID', '')
+
 
         if dhcp_ranges_str:
             short_parts = []
@@ -500,7 +508,9 @@ class CustomDeviceForm(forms.ModelForm):
             device.custom_field_data['DHCP'] = ''
 
         device.save()
-
+        Device.objects.filter(pk=device.pk).update(
+            custom_field_data={**device.custom_field_data, 'PID': self.cleaned_data.get('Service_ID', '')}
+        )
         new_service     = device.local_context_data['KAK_DATA']['services']
         new_device_type = self.cleaned_data.get('device_type')
         new_lan         = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
@@ -919,7 +929,7 @@ class NewTenantForm(TenantForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        allowed_fields = {'name', 'slug', 'cf_Imones_kodas', 'cf_Kliento_ID', 'cf_kliento_kontaktinis_asmuo', 'cf_paslaugu_gavejo_id',''}
+        allowed_fields = {'name', 'slug', 'cf_imones_kodas', 'cf_kliento_id', 'cf_kliento_kontaktinis_asmuo', 'cf_paslaugu_gavejo_id',''}
         for field_name in list(self.fields.keys()):
             if field_name not in allowed_fields:
                 del self.fields[field_name]
@@ -944,13 +954,13 @@ class NewTenantForm(TenantForm):
         cpe_group = self._get_cpe_group()
         if not cpe_group:
             return cleaned_data
-        imones_kodas = self.data.get('cf_Imones_kodas')
+        imones_kodas = self.data.get('cf_imones_kodas')
 
         if imones_kodas:
             if not str(imones_kodas).isdigit():
-                self.add_error('cf_Imones_kodas', 'Įmonės kodas tik skaitmenys')
+                self.add_error('cf_imones_kodas', 'Įmonės kodas tik skaitmenys')
             elif len(str(imones_kodas)) != 9:
-                self.add_error('cf_Imones_kodas', 'Įmonės kodas turi būti 9 skaičiai')
+                self.add_error('cf_imones_kodas', 'Įmonės kodas turi būti 9 skaičiai')
 
         slug = self.data.get('slug')
         name = self.data.get('name')

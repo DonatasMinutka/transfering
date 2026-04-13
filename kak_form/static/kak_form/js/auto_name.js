@@ -173,16 +173,19 @@ document.addEventListener('DOMContentLoaded', function() {
                     .map(f => removeLithuanianDiacritics(f).toUpperCase())
             );
 
-            tenant = tenant.trim()
+            const words = tenant.trim()
                 .replace(/[-,]/g, ' ')
                 .split(/\s+/)
-                .filter(word => word && !singleForms.has(word.toUpperCase()))
-                .map(word => word[0].toUpperCase())
-                .join('');
+                .filter(word => word && !singleForms.has(word.toUpperCase()));
+
+            if (words.length === 1) {
+                tenant = words[0].length <= 10 ? words[0].toUpperCase() : words[0].substring(0, 3).toUpperCase();
+            } else {
+                tenant = words.map(word => word[0].toUpperCase()).join('');
+            }
         } else if (tenant.length > 10) {
             tenant = tenant.substring(0, 3);
         }
-
         if (tenant && site) {
             const autoName = `${tenant}_${matches0}${matches1}_${matches2}`.toUpperCase()
                 .replace(/\s+/g, '_')
