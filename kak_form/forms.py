@@ -58,7 +58,7 @@ class CustomDeviceForm(forms.ModelForm):
     )
     Given_WAN_Address = forms.CharField(
         max_length=50,
-        required=True,
+        required=False,
         validators=[validate_ipv4],
         widget=forms.TextInput(attrs={'placeholder': '192.168.1.1', 'class': 'form-control'}),
         label="WAN IP Address",
@@ -111,19 +111,19 @@ class CustomDeviceForm(forms.ModelForm):
     )
     CAPN_Address = forms.CharField(
         max_length=50,
-        required=True,
+        required=False,
         widget=forms.TextInput(attrs={'placeholder': '192.168.1.1', 'class': 'form-control'}),
         label="CAPN Address",
     )
     Tunnel = forms.CharField(
         max_length=50,
-        required=True,
+        required=False,
         widget=forms.TextInput(attrs={'placeholder': '192.168.1.1', 'class': 'form-control'}),
         label="Tunnel",
     )
     Cellular = forms.CharField(
         max_length=50,
-        required=True,
+        required=False,
         widget=forms.TextInput(attrs={'placeholder': '192.168.1.1', 'class': 'form-control'}),
         label="Cellular",
     )
@@ -252,11 +252,6 @@ class CustomDeviceForm(forms.ModelForm):
         return ConfigTemplate.objects.filter(name__icontains=search_name).first()
 
     def _check_duplicate_ip(self, ip_address, vrf, extra_exclude_pks=None):
-        """
-        Raise ValidationError if ip_address already exists in the given VRF.
-        extra_exclude_pks: list of IPAddress PKs to exclude (previously saved
-        additional LAN IPs for this device that should not self-conflict on re-save).
-        """
         interface_ct = ContentType.objects.get_for_model(Interface)
         qs = IPAddress.objects.filter(address=ip_address)
         qs = qs.filter(vrf=vrf) if vrf else qs.filter(vrf__isnull=True)
@@ -929,7 +924,7 @@ class NewTenantForm(TenantForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        allowed_fields = {'name', 'slug', 'cf_imones_kodas', 'cf_kliento_id', 'cf_kliento_kontaktinis_asmuo', 'cf_paslaugu_gavejo_id','tsm_sdm',''}
+        allowed_fields = {'name', 'slug', 'cf_imones_kodas', 'cf_kliento_id', 'cf_kliento_kontaktinis_asmuo', 'cf_paslaugu_gavejo_id','cf_tsm_sdm',''}
         for field_name in list(self.fields.keys()):
             if field_name not in allowed_fields:
                 del self.fields[field_name]
