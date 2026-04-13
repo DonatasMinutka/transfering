@@ -945,13 +945,13 @@ class NewTenantForm(TenantForm):
         cpe_group = self._get_cpe_group()
         if not cpe_group:
             return cleaned_data
-        imones_kodas = self.data.get('cf_Imones_kodas')
+        imones_kodas = self.data.get('cf_imones_kodas')
 
         if imones_kodas:
             if not str(imones_kodas).isdigit():
-                self.add_error('cf_Imones_kodas', 'Įmonės kodas tik skaitmenys')
+                self.add_error('cf_imones_kodas', 'Įmonės kodas tik skaitmenys')
             elif len(str(imones_kodas)) != 9:
-                self.add_error('cf_Imones_kodas', 'Įmonės kodas turi būti 9 skaičiai')
+                self.add_error('cf_imones_kodas', 'Įmonės kodas turi būti 9 skaičiai')
 
         slug = self.data.get('slug')
         name = self.data.get('name')
