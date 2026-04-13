@@ -149,6 +149,7 @@ class CustomDeviceForm(forms.ModelForm):
         })
         self.fields['name'].widget.attrs.update({'id': 'id_name', 'class': 'form-control'})
         self.fields['tenant'].label = 'Tenant / Imone'
+        self.fields['tenant'].required = True
         self.fields['site'].label = 'Site / Vieta'
         self.fields['name'].label = 'Name / Pavadinimas (Sugeneruojamas)'
         self.fields['device_type'].label = 'Device Type / Modelis'
