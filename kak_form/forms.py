@@ -929,7 +929,7 @@ class NewTenantForm(TenantForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        allowed_fields = {'name', 'slug', 'cf_imones_kodas', 'cf_kliento_id', 'cf_kliento_kontaktinis_asmuo', 'cf_paslaugu_gavejo_id',''}
+        allowed_fields = {'name', 'slug', 'cf_imones_kodas', 'cf_kliento_id', 'cf_kliento_kontaktinis_asmuo', 'cf_paslaugu_gavejo_id','tsm_sdm',''}
         for field_name in list(self.fields.keys()):
             if field_name not in allowed_fields:
                 del self.fields[field_name]
