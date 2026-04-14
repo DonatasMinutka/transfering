@@ -852,7 +852,7 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'l2t.root',  'type': 'virtual',    'enabled': True},
                     {'name': 'ssl.root',  'type': 'virtual',    'enabled': True,  'description': 'SSL VPN interface'},
                     {'name': 'internal',  'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
-                    {'name': 'MPLS_WAN',  'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip_from_30}/24'},
+                    {'name': 'MPLS_WAN',  'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip_from_30}/30'},
                 ]
             elif '90g' in device_model:
                 interfaces = [
@@ -871,7 +871,7 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'l2t.root', 'type': 'virtual',    'enabled': True},
                     {'name': 'ssl.root', 'type': 'virtual',    'enabled': True,  'description': 'SSL VPN interface'},
                     {'name': 'lan',      'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
-                    {'name': 'MPLS_WAN', 'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip_from_30}/24'},
+                    {'name': 'MPLS_WAN', 'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip_from_30}/30'},
                 ]
             elif 'rb760igs' in device_model:
                 interfaces = [
