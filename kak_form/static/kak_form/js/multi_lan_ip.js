@@ -1,14 +1,3 @@
-/**
- * multi_lan_ip.js
- *
- * Adds a "+ Add LAN IP" button below the primary LAN IP field.
- * Rows are managed directly in the DOM.
- * The hidden field is only written on form submit.
- *
- * Uses [name="..."] selectors — Django overwrites custom widget id= attrs
- * with its own auto-generated id_<FieldName>, so IDs are unreliable.
- */
-
 (function () {
   'use strict';
 
@@ -21,13 +10,9 @@
       return;
     }
 
-    // -----------------------------------------------------------------------
-    // Container that holds the extra-IP rows
-    // -----------------------------------------------------------------------
     var rowContainer = document.createElement('div');
     rowContainer.id = 'lan-extra-rows';
 
-    // Insert container + button right after the primary input element itself
     primaryInput.insertAdjacentElement('afterend', rowContainer);
 
     var addBtn = document.createElement('button');
@@ -38,9 +23,7 @@
     addBtn.title = 'Add an extra LAN IP (stored in NetBox, not used in configs)';
     rowContainer.insertAdjacentElement('afterend', addBtn);
 
-    // -----------------------------------------------------------------------
-    // Add a single new empty row directly into the DOM
-    // -----------------------------------------------------------------------
+
     function addRow(value) {
       var row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:4px;';
@@ -56,7 +39,6 @@
         var valid = !v || /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(v);
         inp.style.borderColor = valid ? '' : '#dc3545';
         inp.title = valid ? '' : 'Must be a valid CIDR, e.g. 10.0.0.1/24';
-        // Remove the row if left blank
         if (!v) {
           row.parentNode && row.parentNode.removeChild(row);
         }
@@ -78,17 +60,12 @@
       return inp;
     }
 
-    // -----------------------------------------------------------------------
-    // "+ Add LAN IP" click — just add a row and focus it
-    // -----------------------------------------------------------------------
     addBtn.addEventListener('click', function () {
       var inp = addRow('');
       inp.focus();
     });
 
-    // -----------------------------------------------------------------------
-    // On submit: collect all row values → write to hidden field
-    // -----------------------------------------------------------------------
+  
     var form = primaryInput.closest('form');
     if (form) {
       form.addEventListener('submit', function () {
@@ -101,9 +78,6 @@
       });
     }
 
-    // -----------------------------------------------------------------------
-    // Edit mode: restore previously saved extra IPs from hidden field
-    // -----------------------------------------------------------------------
     var existing = hiddenInput.value.trim();
     if (existing) {
       existing.split(';').forEach(function (ip) {

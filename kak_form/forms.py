@@ -312,7 +312,6 @@ class CustomDeviceForm(forms.ModelForm):
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
                 raise forms.ValidationError(f'A device with PID "{service_id}" already exists.')
-            return cleaned_data
         additional_lan_ips = self._parse_additional_lan_ips(additional_lan_raw)
         for ip_cidr in additional_lan_ips:
             if '/' not in ip_cidr:
@@ -438,14 +437,13 @@ class CustomDeviceForm(forms.ModelForm):
 
         if not commit:
             return device
-
+       
         device.save()
         try:
             kak_tag = Tag.objects.get(slug='kak-form')
             device.tags.add(kak_tag)
         except Tag.DoesNotExist:
-            pass
-
+            pass  
         enable_dhcp = self.cleaned_data.get('Enable_DHCP', False)
         dhcp_ranges_str = self.cleaned_data.get('DHCP_Ranges', '') if enable_dhcp else ''
         enable_dhcp_helper = self.cleaned_data.get('Enable_DHCP_HELPER', False)
@@ -456,31 +454,20 @@ class CustomDeviceForm(forms.ModelForm):
 
         if not device.local_context_data:
             device.local_context_data = {}
-
-        # Clean up old unassigned additional IPs from previous save
         old_pks = device.local_context_data.get('KAK_DATA', {}).get('additional_lan_ip_pks', [])
         if old_pks:
             IPAddress.objects.filter(pk__in=old_pks, assigned_object_id__isnull=True).delete()
 
-        # Create IPAddress objects for additional LAN IPs
         new_additional_pks = []
         for ip_cidr in additional_lan_ips:
-            if not isinstance(ip_cidr, str) or '.' not in ip_cidr:
-                logger.error(f"Skipping invalid additional LAN IP value: {ip_cidr!r}")
-                continue
-            try:
-                ip_obj, _ = IPAddress.objects.get_or_create(
-                    address=ip_cidr,
-                    vrf=vrf,
-                    tenant=device.tenant,
-                    defaults={'status': 'active'},
-                )
-                new_additional_pks.append(int(ip_obj.pk))
-            except Exception as e:
-                logger.error(f"Failed to get_or_create IPAddress for {ip_cidr!r}: {e}")
-                continue
+            ip_obj, _ = IPAddress.objects.get_or_create(
+                address=ip_cidr,
+                vrf=vrf,
+                tenant=device.tenant,
+                defaults={'status': 'active'},
+            )
+            new_additional_pks.append(int(ip_obj.pk))
 
-        # Store all KAK data in local context
         device.local_context_data['KAK_DATA'] = {
             'services':              self.cleaned_data.get('Services', ''),
             'wan':                   self.cleaned_data.get('Given_WAN_Address', ''),
@@ -500,7 +487,7 @@ class CustomDeviceForm(forms.ModelForm):
         if not device.custom_field_data:
             device.custom_field_data = {}
 
-        # Build short DHCP range summary for custom field
+
         if dhcp_ranges_str:
             short_parts = []
             for rng in dhcp_ranges_str.split(';'):
@@ -515,8 +502,9 @@ class CustomDeviceForm(forms.ModelForm):
             device.custom_field_data['DHCP'] = ''
 
         device.save()
-
-        # Recreate interfaces if anything significant changed
+        Device.objects.filter(pk=device.pk).update(
+            custom_field_data={**device.custom_field_data, 'PID': self.cleaned_data.get('Service_ID', '')}
+        )
         new_service     = device.local_context_data['KAK_DATA']['services']
         new_device_type = self.cleaned_data.get('device_type')
         new_lan         = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
@@ -530,21 +518,16 @@ class CustomDeviceForm(forms.ModelForm):
         ):
             self._create_interfaces_from_config(device)
 
-        # Reload from DB to get any changes made by _create_interfaces_from_config
         device.refresh_from_db()
 
         if not device.custom_field_data:
             device.custom_field_data = {}
 
-        # Resolve LAN IP object for custom field
         lan_ip_str = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
-        lan_ip_obj = IPAddress.objects.filter(address=lan_ip_str).first() if lan_ip_str else None
+        ip_obj = IPAddress.objects.filter(address=lan_ip_str).first() if lan_ip_str else None
+        device.custom_field_data["DHCP_Helper"] = dhcp_helper_str
+        device.custom_field_data['LAN_IP'] = int(ip_obj.pk) if ip_obj else None
 
-        # Write all custom fields in one final save
-        device.custom_field_data['DHCP_Helper']      = dhcp_helper_str
-        device.custom_field_data['LAN_IP']           = int(lan_ip_obj.pk) if lan_ip_obj else None
-        device.custom_field_data['Additional_LAN_IP'] = new_additional_pks
-        device.custom_field_data['PID']              = self.cleaned_data.get('Service_ID', '')
 
         device.save()
         return device
@@ -927,6 +910,7 @@ class NewSiteForm(SiteForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['name'].help_text = 'Užvadinimo struktūra (Gatvė g. namo nr, Miestas) Pvz. "J. Basanavičiaus g. 93, Kėdainiai"'
         allowed_fields = {'name', 'slug', 'status'}
         for field_name in list(self.fields.keys()):
             if field_name not in allowed_fields:
@@ -940,6 +924,7 @@ class NewTenantForm(TenantForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['name'].help_text = "Užvadinimo pavyzdžiai: Maxima, UAB; SEB bankas, AB; Įmonės pavadinimas, UAB "
         allowed_fields = {'name', 'slug', 'cf_imones_kodas', 'cf_kliento_id', 'cf_kliento_kontaktinis_asmuo', 'cf_paslaugu_gavejo_id','cf_tsm_sdm',''}
         for field_name in list(self.fields.keys()):
             if field_name not in allowed_fields:
