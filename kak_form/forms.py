@@ -309,7 +309,7 @@ class CustomDeviceForm(forms.ModelForm):
         additional_lan_raw = cleaned_data.get('Additional_LAN_IPs', '')
         service_id = cleaned_data.get('Service_ID')
         if service_id:
-            qs = Device.objects.filter(custom_field_data__PID=service_id)
+            qs = Device.objects.filter(custom_field_data__PID=int(service_id))  # cast to int
             if self.instance.pk:
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
@@ -559,7 +559,7 @@ class CustomDeviceForm(forms.ModelForm):
             'services':              self.cleaned_data.get('Services', ''),
             'wan':                   self.cleaned_data.get('Given_WAN_Address', ''),
             'lan':                   self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', ''),
-            'service_id':            self.cleaned_data.get('Service_ID', ''),
+            'service_id': int(self.cleaned_data.get('Service_ID')) if self.cleaned_data.get('Service_ID') else '',
             'capn':                  self.cleaned_data.get('CAPN_Address', ''),
             'cellular':              self.cleaned_data.get('Cellular', ''),
             'tunnel':                self.cleaned_data.get('Tunnel', ''),
@@ -589,8 +589,9 @@ class CustomDeviceForm(forms.ModelForm):
             device.custom_field_data['DHCP'] = ''
 
         device.save()
+        pid_value = self.cleaned_data.get('Service_ID', '')
         Device.objects.filter(pk=device.pk).update(
-            custom_field_data={**device.custom_field_data, 'PID': self.cleaned_data.get('Service_ID', '')}
+            custom_field_data={**device.custom_field_data, 'PID': int(pid_value) if pid_value else None}
         )
         new_service     = device.local_context_data['KAK_DATA']['services']
         new_device_type = self.cleaned_data.get('device_type')
@@ -1097,7 +1098,8 @@ class NewTenantForm(TenantForm):
             tenant.save()  
             
             kak_tag = Tag.objects.get(slug='kak-form')
-            tenant.tags.add(kak_tag)             
+            tenant.tags.add(kak_tag) 
+            
             vrf_name = f"vrf-{cpe_group.name.lower()}-{tenant.name.lower()}-default"
             if cpe_group:
                 VRF.objects.get_or_create(
