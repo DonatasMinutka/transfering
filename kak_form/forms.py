@@ -111,7 +111,7 @@ class CustomDeviceForm(forms.ModelForm):
     CAPN_Address = forms.CharField(
         max_length=50,
         required=False,
-        widget=forms.TextInput(attrs={'placeholder': '192.168.1.1', 'class': 'form-control'}),
+        widget=forms.TextInput(attrs={'placeholder': 'dps.xxxxxxx.vpn.lt', 'class': 'form-control'}),
         label="CAPN Address",
     )
     Tunnel = forms.CharField(
@@ -361,7 +361,6 @@ class CustomDeviceForm(forms.ModelForm):
                 raise forms.ValidationError(f'A device with name "{name}" already exists.')
 
         def _host(cidr):
-            """Return just the host part of a CIDR string, or the value as-is."""
             return cidr.split('/')[0] if cidr and '/' in cidr else (cidr or '')
 
         if lan_ip and wan_ip and _host(lan_ip) == _host(wan_ip):
@@ -1063,7 +1062,6 @@ class NewTenantForm(TenantForm):
                 raise forms.ValidationError('Tenant name must be unique per group.')
 
         return cleaned_data
-
     def save(self, commit=True):
         tenant = super().save(commit=False)
         cpe_group = self._get_cpe_group()
@@ -1079,9 +1077,10 @@ class NewTenantForm(TenantForm):
             
             vrf_name = f"vrf-{cpe_group.name.lower()}-{tenant.name.lower()}-default"
             if cpe_group:
-                VRF.objects.get_or_create(
+                vrf, _ = VRF.objects.get_or_create(   
                     name=vrf_name,
                     defaults={"tenant": tenant},
                 )
+                vrf.tags.add(kak_tag)                  
         
         return tenant
