@@ -59,7 +59,7 @@ class CustomDeviceForm(forms.ModelForm):
     Given_WAN_Address = forms.CharField(
         max_length=50,
         required=False,
-        validators=[validate_ipv4],
+        validators=[validate_ipv4_cidr],
         widget=forms.TextInput(attrs={'placeholder': '192.168.1.1', 'class': 'form-control'}),
         label="WAN IP Address",
     )
@@ -253,8 +253,8 @@ class CustomDeviceForm(forms.ModelForm):
 
     def _check_duplicate_ip(self, ip_address, vrf, extra_exclude_pks=None):
         interface_ct = ContentType.objects.get_for_model(Interface)
+
         qs = IPAddress.objects.filter(address=ip_address)
-        qs = qs.filter(vrf=vrf) if vrf else qs.filter(vrf__isnull=True)
 
         if self.instance.pk:
             own_iface_ids = list(
@@ -269,9 +269,12 @@ class CustomDeviceForm(forms.ModelForm):
                 qs = qs.exclude(pk__in=extra_exclude_pks)
 
         if qs.exists():
-            vrf_name = vrf.name if vrf else 'No VRF'
+            existing = qs.first()
+            vrf_name = existing.vrf.name if existing.vrf else 'No VRF'
+            status = existing.status or 'unknown'
             raise forms.ValidationError(
-                f"Duplicate IP found in VRF {vrf_name}: {qs.first()}"
+                f"IP {ip_address} already exists in NetBox (VRF: {vrf_name}, status: {status}). "
+                f"Please use a different address or free this IP first."
             )
 
     def _check_dhcp_range(self, lan_ip, dhcp_start, dhcp_end):
@@ -293,7 +296,6 @@ class CustomDeviceForm(forms.ModelForm):
         cleaned_data = super().clean()
 
         lan_ip = cleaned_data.get('LAN_IP_Address_And_Subnet_Mask')
-        lan_ip_no_mask = lan_ip.split('/')[0] if lan_ip and '/' in lan_ip else lan_ip
         wan_ip = cleaned_data.get('Given_WAN_Address')
         service_id = cleaned_data.get('Service_ID')
         tenant = cleaned_data.get('tenant')
@@ -324,6 +326,13 @@ class CustomDeviceForm(forms.ModelForm):
                 raise forms.ValidationError(
                     f"Additional LAN IP '{ip_cidr}' is not a valid IPv4 CIDR address."
                 )
+        seen_additional = []
+        for ip_cidr in additional_lan_ips:
+            if ip_cidr in seen_additional:
+                raise forms.ValidationError(
+                    f"Additional LAN IP '{ip_cidr}' is listed more than once."
+                )
+            seen_additional.append(ip_cidr)
         cleaned_data['Additional_LAN_IPs'] = additional_lan_ips
 
         if enable_dhcp and dhcp_ranges_str:
@@ -352,9 +361,54 @@ class CustomDeviceForm(forms.ModelForm):
             if qs.exists():
                 raise forms.ValidationError(f'A device with name "{name}" already exists.')
 
-        if lan_ip_no_mask and wan_ip and lan_ip_no_mask == wan_ip:
-            raise forms.ValidationError("WAN and LAN IP addresses cannot be the same.")
+        def _host(cidr):
+            """Return just the host part of a CIDR string, or the value as-is."""
+            return cidr.split('/')[0] if cidr and '/' in cidr else (cidr or '')
 
+        if lan_ip and wan_ip and _host(lan_ip) == _host(wan_ip):
+            raise forms.ValidationError("WAN and LAN IP addresses cannot be the same.")
+        
+        service = cleaned_data.get('Services')
+        if service == 'nkdps' and wan_ip:
+            try:
+                network = ipaddress.IPv4Network(wan_ip, strict=False)
+                if network.prefixlen != 30:
+                    raise forms.ValidationError(
+                        f"NKDPS service requires the WAN IP address to use a /30 subnet "
+                        f"(e.g. 192.168.1.1/30). You entered '{wan_ip}' which has /{network.prefixlen}."
+                    )
+            except ValueError:
+                pass 
+        if service == 'isop' and wan_ip:
+            try:
+                network = ipaddress.IPv4Network(wan_ip, strict=False)
+                if network.prefixlen != 29:
+                    raise forms.ValidationError(
+                        f"ISOP service requires the WAN IP address to use a /29 subnet "
+                        f"(e.g. 192.168.1.1/29). You entered '{wan_ip}' which has /{network.prefixlen}."
+                    )
+            except ValueError:
+                pass 
+        if service == 'internet' and wan_ip:
+            try:
+                network = ipaddress.IPv4Network(wan_ip, strict=False)
+                if network.prefixlen != 24:
+                    raise forms.ValidationError(
+                        f"Internet service requires the WAN IP address to use a /24 subnet "
+                        f"(e.g. 192.168.1.1/24). You entered '{wan_ip}' which has /{network.prefixlen}."
+                    )
+            except ValueError:
+                pass 
+        for extra_ip in additional_lan_ips:
+            if lan_ip and _host(extra_ip) == _host(lan_ip):
+                raise forms.ValidationError(
+                    f"Additional LAN IP '{extra_ip}' is the same as the primary LAN IP."
+                )
+            if wan_ip and _host(extra_ip) == _host(wan_ip):
+                raise forms.ValidationError(
+                    f"Additional LAN IP '{extra_ip}' conflicts with the WAN IP."
+                )
+        
         if service_id:
             if not service_id.isdigit():
                 raise forms.ValidationError("Service ID may only contain digits.")
@@ -368,11 +422,11 @@ class CustomDeviceForm(forms.ModelForm):
             except Exception:
                 pass
 
-      
         existing_additional_pks = []
         if self.instance.pk:
             kak_data = (self.instance.local_context_data or {}).get('KAK_DATA', {})
             existing_additional_pks = kak_data.get('additional_lan_ip_pks', [])
+
 
         if lan_ip:
             self._check_duplicate_ip(lan_ip, vrf)
@@ -380,6 +434,18 @@ class CustomDeviceForm(forms.ModelForm):
             self._check_duplicate_ip(wan_ip, vrf)
         for extra_ip in additional_lan_ips:
             self._check_duplicate_ip(extra_ip, vrf, extra_exclude_pks=existing_additional_pks)
+
+        capn_address = cleaned_data.get('CAPN_Address')
+        if capn_address:
+            self._check_duplicate_ip(capn_address, vrf)
+
+        tunnel = cleaned_data.get('Tunnel')
+        if tunnel:
+            self._check_duplicate_ip(tunnel, vrf)
+
+        cellular = cleaned_data.get('Cellular')
+        if cellular:
+            self._check_duplicate_ip(cellular, vrf)
 
         if self.instance.pk:
             validation_device = self.instance
@@ -437,11 +503,25 @@ class CustomDeviceForm(forms.ModelForm):
 
         if not commit:
             return device
-       
+        service = self.data.get('Services')
         device.save()
+        SERVICES_WITH_SLA = {
+            'capn', 'internet', 'isop', 'nkdps',
+            'wan_failover', 'lte_5g_nokia', '4g', '4g_apn',
+        }
+
         try:
+            sla_tag = Tag.objects.get(slug='sla0')
             kak_tag = Tag.objects.get(slug='kak-form')
             device.tags.add(kak_tag)
+
+            if service in SERVICES_WITH_SLA:
+                service_tag = Tag.objects.get(slug=service)
+                device.tags.add(service_tag, sla_tag)
+
+
+
+
         except Tag.DoesNotExist:
             pass  
         enable_dhcp = self.cleaned_data.get('Enable_DHCP', False)
@@ -460,13 +540,20 @@ class CustomDeviceForm(forms.ModelForm):
 
         new_additional_pks = []
         for ip_cidr in additional_lan_ips:
-            ip_obj, _ = IPAddress.objects.get_or_create(
-                address=ip_cidr,
-                vrf=vrf,
-                tenant=device.tenant,
-                defaults={'status': 'active'},
-            )
-            new_additional_pks.append(int(ip_obj.pk))
+            if not isinstance(ip_cidr, str) or '.' not in ip_cidr:
+                logger.error(f"Skipping invalid additional LAN IP value: {ip_cidr!r}")
+                continue
+            try:
+                ip_obj, _ = IPAddress.objects.get_or_create(
+                    address=ip_cidr,
+                    vrf=vrf,
+                    tenant=device.tenant,
+                    defaults={'status': 'active'},
+                )
+                new_additional_pks.append(int(ip_obj.pk))
+            except Exception as e:
+                logger.error(f"Failed to get_or_create IPAddress for {ip_cidr!r}: {e}")
+                continue
 
         device.local_context_data['KAK_DATA'] = {
             'services':              self.cleaned_data.get('Services', ''),
@@ -524,9 +611,12 @@ class CustomDeviceForm(forms.ModelForm):
             device.custom_field_data = {}
 
         lan_ip_str = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
+        lan_ip_obj = IPAddress.objects.filter(address=lan_ip_str).first() if lan_ip_str else None
         ip_obj = IPAddress.objects.filter(address=lan_ip_str).first() if lan_ip_str else None
-        device.custom_field_data["DHCP_Helper"] = dhcp_helper_str
-        device.custom_field_data['LAN_IP'] = int(ip_obj.pk) if ip_obj else None
+        device.custom_field_data['DHCP_Helper']      = dhcp_helper_str
+        device.custom_field_data['LAN_IP']           = int(lan_ip_obj.pk) if lan_ip_obj else None
+        device.custom_field_data['Additional_LAN_IP'] = new_additional_pks
+        device.custom_field_data['PID']              = self.cleaned_data.get('Service_ID', '')
 
 
         device.save()
@@ -599,23 +689,36 @@ class CustomDeviceForm(forms.ModelForm):
         except Exception as e:
             logger.error(f"Failed to create interfaces for {device.name}: {e}", exc_info=True)
 
-    def _calculate_first_host(self, ip_address, subnet_mask=29):
-        if not ip_address:
+    def _calculate_first_host(self, given_wan_ip):
+        if not given_wan_ip:
             return None
         try:
-            network = ipaddress.ip_network(f"{ip_address}/{subnet_mask}", strict=False)
-            return str(network.network_address + 3)
+            network = ipaddress.ip_network(f"{given_wan_ip}", strict=False)
+
+            if network.prefixlen != 29:
+                raise ValueError(f"Expected /29, got /{network.prefixlen}")
+            
+            host_ip = network.network_address + 3         
+            return f"{host_ip}/{network.prefixlen}"  
         except ValueError:
             return None
-
+        
     def _calculate_wan_ip_from_30(self, given_wan_ip):
         if not given_wan_ip:
             return None
         try:
-            network = ipaddress.ip_network(f"{given_wan_ip}/30", strict=False)
-            return str(network.network_address + 2)
-        except ValueError:
+            network = ipaddress.ip_network(given_wan_ip, strict=False)
+
+            if network.prefixlen != 30:
+                raise ValueError(f"Expected /30, got /{network.prefixlen}")
+
+            host_ip = network.network_address + 2  
+            return f"{host_ip}/{network.prefixlen}"
+
+        except ValueError as e:
+            print(f"Invalid WAN IP: {e}")
             return None
+
 
     def _get_default_interfaces_for_service(self, service, device):
         device_model = device.device_type.model.lower() if device.device_type else ''
@@ -625,7 +728,7 @@ class CustomDeviceForm(forms.ModelForm):
         tunnel   = kak_data.get('tunnel', '')
         cellular = kak_data.get('cellular', '')
 
-        calculated_wan_ip         = self._calculate_first_host(wan_ip, 29)
+        calculated_wan_ip         = self._calculate_first_host(wan_ip)
         calculated_wan_ip_from_30 = self._calculate_wan_ip_from_30(wan_ip)
 
         interfaces = []
@@ -650,8 +753,8 @@ class CustomDeviceForm(forms.ModelForm):
                 interfaces = [
                     {'name': 'Tunnel0',  'type': 'virtual',    'enabled': True, 'ip': tunnel},
                     {'name': 'Cellular0','type': '4g',          'enabled': True, 'ip': cellular},
-                    {'name': 'bridge1',  'type': 'bridge',      'enabled': True, 'ip': lan_ip, 'is_primary': True},
-                    {'name': 'lte1',     'type': 'lte',         'enabled': True, 'ip': wan_ip},
+                    {'name': 'bridge1',  'type': 'bridge',      'enabled': True, 'ip': lan_ip},
+                    {'name': 'lte1',     'type': 'lte',         'enabled': True, 'ip': wan_ip, 'is_primary': True},
                     {'name': 'ether1',   'type': '1000base-t',  'enabled': True, 'bridge': 'bridge1'},
                     {'name': 'ether2',   'type': '1000base-t',  'enabled': True, 'bridge': 'bridge1'},
                     {'name': 'ether3',   'type': '1000base-t',  'enabled': True, 'bridge': 'bridge1'},
@@ -663,8 +766,8 @@ class CustomDeviceForm(forms.ModelForm):
         elif service == 'capn':
             if 'd53g' in device_model:
                 interfaces = [
-                    {'name': 'bridge1', 'type': 'bridge',    'enabled': True, 'ip': lan_ip, 'is_primary': True},
-                    {'name': 'lte1',    'type': 'lte',        'enabled': True, 'ip': wan_ip},
+                    {'name': 'bridge1', 'type': 'bridge',    'enabled': True, 'ip': lan_ip},
+                    {'name': 'lte1',    'type': 'lte',        'enabled': True, 'ip': wan_ip, 'is_primary': True},
                     {'name': 'ether1',  'type': '1000base-t', 'enabled': True, 'bridge': 'bridge1'},
                     {'name': 'ether2',  'type': '1000base-t', 'enabled': True, 'bridge': 'bridge1'},
                     {'name': 'ether3',  'type': '1000base-t', 'enabled': True, 'bridge': 'bridge1'},
@@ -676,8 +779,8 @@ class CustomDeviceForm(forms.ModelForm):
         elif service == 'internet':
             if '50g' in device_model:
                 interfaces = [
-                    {'name': 'wan',      'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}/24'},
-                    {'name': 'lan',      'type': '1000base-t', 'enabled': True,  'ip': lan_ip, 'is_primary': True},
+                    {'name': 'wan',      'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}', 'is_primary': True},
+                    {'name': 'lan',      'type': '1000base-t', 'enabled': True,  'ip': lan_ip},
                     {'name': 'lan1',     'type': '1000base-t', 'enabled': True,  'parent': 'lan'},
                     {'name': 'lan2',     'type': '1000base-t', 'enabled': True,  'parent': 'lan'},
                     {'name': 'lan3',     'type': '1000base-t', 'enabled': True,  'parent': 'lan'},
@@ -689,10 +792,10 @@ class CustomDeviceForm(forms.ModelForm):
                 ]
             elif '60f' in device_model:
                 interfaces = [
-                    {'name': 'wan1',      'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}/24'},
+                    {'name': 'wan1',      'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}', 'is_primary': True},
                     {'name': 'wan2',      'type': '1000base-t', 'enabled': True,  'description': 'WAN interface (DHCP)'},
                     {'name': 'dmz',       'type': '1000base-t', 'enabled': True,  'description': 'Default: 10.10.10.1'},
-                    {'name': 'internal',  'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
+                    {'name': 'internal',  'type': 'bridge',     'enabled': True,  'ip': lan_ip},
                     {'name': 'internal1', 'type': '1000base-t', 'enabled': True},
                     {'name': 'internal2', 'type': '1000base-t', 'enabled': True},
                     {'name': 'internal3', 'type': '1000base-t', 'enabled': True},
@@ -707,9 +810,9 @@ class CustomDeviceForm(forms.ModelForm):
                 ]
             elif '90g' in device_model:
                 interfaces = [
-                    {'name': 'wan1',   'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}/29'},
+                    {'name': 'wan1',   'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}', 'is_primary': True},
                     {'name': 'wan2',   'type': '1000base-t', 'enabled': True,  'description': 'WAN interface (DHCP)'},
-                    {'name': 'lan',    'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
+                    {'name': 'lan',    'type': 'bridge',     'enabled': True,  'ip': lan_ip},
                     {'name': 'port1',  'type': '1000base-t', 'enabled': True},
                     {'name': 'port2',  'type': '1000base-t', 'enabled': True},
                     {'name': 'port3',  'type': '1000base-t', 'enabled': True},
@@ -741,8 +844,8 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'naf.root',   'type': 'virtual',    'enabled': True},
                     {'name': 'l2t.root',   'type': 'virtual',    'enabled': True},
                     {'name': 'ssl.root',   'type': 'virtual',    'enabled': True,  'description': 'SSL VPN interface'},
-                    {'name': 'internal',   'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
-                    {'name': 'wans1.isop', 'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip}/29'},
+                    {'name': 'internal',   'type': 'bridge',     'enabled': True,  'ip': lan_ip},
+                    {'name': 'wans1.isop', 'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip}', 'is_primary': True},
                 ]
             elif '90g' in device_model:
                 interfaces = [
@@ -760,8 +863,8 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'naf.root',   'type': 'virtual',    'enabled': True},
                     {'name': 'l2t.root',   'type': 'virtual',    'enabled': True},
                     {'name': 'ssl.root',   'type': 'virtual',    'enabled': True,  'description': 'SSL VPN interface'},
-                    {'name': 'lan',        'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
-                    {'name': 'wans1.isop', 'type': 'bridge',     'enabled': True,  'ip': calculated_wan_ip},
+                    {'name': 'lan',        'type': 'bridge',     'enabled': True,  'ip': lan_ip},
+                    {'name': 'wans1.isop', 'type': 'bridge',     'enabled': True,  'ip': calculated_wan_ip, 'is_primary': True},
                 ]
 
         elif service == 'lte_5g_nokia':
@@ -797,8 +900,8 @@ class CustomDeviceForm(forms.ModelForm):
         elif service == 'wan_failover':
             if '40f' in device_model:
                 interfaces = [
-                    {'name': 'wan',      'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}/24'},
-                    {'name': 'interval', 'type': 'virtual',    'enabled': True,  'ip': lan_ip, 'is_primary': True},
+                    {'name': 'wan',      'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}', 'is_primary': True},
+                    {'name': 'interval', 'type': 'virtual',    'enabled': True,  'ip': lan_ip},
                     {'name': 'lan1',     'type': '1000base-t', 'enabled': True,  'parent': 'interval'},
                     {'name': 'lan2',     'type': '1000base-t', 'enabled': True,  'parent': 'interval'},
                     {'name': 'lan3',     'type': '1000base-t', 'enabled': True,  'parent': 'interval'},
@@ -812,12 +915,12 @@ class CustomDeviceForm(forms.ModelForm):
                 ]
             elif 'd53g' in device_model:
                 interfaces = [
-                    {'name': 'bridge1',    'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
+                    {'name': 'bridge1',    'type': 'bridge',     'enabled': True,  'ip': lan_ip},
                     {'name': 'ether1',     'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'ether2',     'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'ether3',     'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'ether4',     'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
-                    {'name': 'wan-ether5', 'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}/24'},
+                    {'name': 'wan-ether5', 'type': '1000base-t', 'enabled': True,  'ip': f'{wan_ip}', 'is_primary': True},
                     {'name': 'lte1-wan',   'type': 'lte',        'enabled': True},
                 ]
 
@@ -829,8 +932,7 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'GigabitEthernet2',   'type': '1000base-t', 'enabled': True},
                     {'name': 'GigabitEthernet3',   'type': '1000base-t', 'enabled': True},
                     {'name': 'GigabitEthernet4',   'type': '1000base-t', 'enabled': True},
-                    {'name': 'GigabitEthernet4.4', 'type': '1000base-t', 'enabled': True,
-                     'ip': f'{calculated_wan_ip_from_30}/24', 'is_primary': True},
+                    {'name': 'GigabitEthernet4.4', 'type': '1000base-t', 'enabled': True, 'ip': f'{calculated_wan_ip_from_30}', 'is_primary': True},
                     {'name': 'GigabitEthernet5',   'type': '1000base-t', 'enabled': True},
                     {'name': 'Vlan1',              'type': '1000base-t', 'enabled': True, 'ip': lan_ip},
                 ]
@@ -850,8 +952,8 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'naf.root',  'type': 'virtual',    'enabled': True},
                     {'name': 'l2t.root',  'type': 'virtual',    'enabled': True},
                     {'name': 'ssl.root',  'type': 'virtual',    'enabled': True,  'description': 'SSL VPN interface'},
-                    {'name': 'internal',  'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
-                    {'name': 'MPLS_WAN',  'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip_from_30}/30'},
+                    {'name': 'internal',  'type': 'bridge',     'enabled': True,  'ip': lan_ip},
+                    {'name': 'MPLS_WAN',  'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip_from_30}', 'is_primary': True},
                 ]
             elif '90g' in device_model:
                 interfaces = [
@@ -869,8 +971,8 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'naf.root', 'type': 'virtual',    'enabled': True},
                     {'name': 'l2t.root', 'type': 'virtual',    'enabled': True},
                     {'name': 'ssl.root', 'type': 'virtual',    'enabled': True,  'description': 'SSL VPN interface'},
-                    {'name': 'lan',      'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
-                    {'name': 'MPLS_WAN', 'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip_from_30}/30'},
+                    {'name': 'lan',      'type': 'bridge',     'enabled': True,  'ip': lan_ip},
+                    {'name': 'MPLS_WAN', 'type': 'bridge',     'enabled': True,  'ip': f'{calculated_wan_ip_from_30}', 'is_primary': True},
                 ]
             elif 'rb760igs' in device_model:
                 interfaces = [
@@ -879,15 +981,15 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'ether3',    'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'ether4',    'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'ether5',    'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
-                    {'name': 'bridge1',   'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
-                    {'name': 'VLAN4_WAN', 'type': 'virtual',    'enabled': True,  'ip': f'{wan_ip}/24'},
+                    {'name': 'bridge1',   'type': 'bridge',     'enabled': True,  'ip': lan_ip},
+                    {'name': 'VLAN4_WAN', 'type': 'virtual',    'enabled': True,  'ip': f'{wan_ip}', 'is_primary': True},
                 ]
             elif 'rb4011igs' in device_model:
                 interfaces = [
-                    {'name': 'bridge1',   'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
+                    {'name': 'bridge1',   'type': 'bridge',     'enabled': True,  'ip': lan_ip},
                     {'name': 'serial0',   'type': 'other',      'enabled': True},
                     {'name': 'serial1',   'type': 'other',      'enabled': True},
-                    {'name': 'VLAN4_WAN', 'type': 'virtual',    'enabled': True,  'ip': f'{wan_ip}/24'},
+                    {'name': 'VLAN4_WAN', 'type': 'virtual',    'enabled': True,  'ip': f'{wan_ip}', 'is_primary': True},
                     {'name': 'ether1',    'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'ether2',    'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'ether3',    'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
@@ -915,8 +1017,15 @@ class NewSiteForm(SiteForm):
         for field_name in list(self.fields.keys()):
             if field_name not in allowed_fields:
                 del self.fields[field_name]
-
-
+    def save(self, commit=True):
+        site = super().save(commit=False)
+        if commit:
+            site.save()
+            self.save_m2m() 
+            kak_tag, _ = Tag.objects.get_or_create(slug='kak-form')
+            site.tags.add(kak_tag)
+        return site
+    
 class NewTenantForm(TenantForm):
     class Meta:
         model = Tenant
@@ -980,14 +1089,20 @@ class NewTenantForm(TenantForm):
     def save(self, commit=True):
         tenant = super().save(commit=False)
         cpe_group = self._get_cpe_group()
+        
         if cpe_group:
             tenant.group = cpe_group
+        
         if commit:
-            tenant.save()
+            tenant.save()  
+            
+            kak_tag = Tag.objects.get(slug='kak-form')
+            tenant.tags.add(kak_tag)             
+            vrf_name = f"vrf-{cpe_group.name.lower()}-{tenant.name.lower()}-default"
             if cpe_group:
-                vrf_name = f"vrf-{cpe_group.name.lower()}-{tenant.name.lower()}-default"
                 VRF.objects.get_or_create(
                     name=vrf_name,
                     defaults={"tenant": tenant},
                 )
+        
         return tenant
