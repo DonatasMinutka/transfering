@@ -502,6 +502,11 @@ class CustomDeviceForm(forms.ModelForm):
             kak_tag = Tag.objects.get(slug='kak-form')
             device.tags.add(kak_tag)
 
+            all_service_slugs = {choice[0] for choice in self.SERVICE_CHOICES if choice[0]}
+            old_service_tags = Tag.objects.filter(slug__in=all_service_slugs)
+            device.tags.remove(*old_service_tags)
+            device.tags.remove(sla_tag)
+
             if service in SERVICES_WITH_SLA:
                 service_tag = Tag.objects.get(slug=service)
                 device.tags.add(service_tag, sla_tag)
