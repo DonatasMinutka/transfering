@@ -578,12 +578,8 @@ class CustomDeviceForm(forms.ModelForm):
         else:
             device.custom_field_data['DHCP'] = ''
 
-        lan_ip_str = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
-        lan_ip_obj = IPAddress.objects.filter(address=lan_ip_str).first() if lan_ip_str else None
 
         device.custom_field_data['DHCP_Helper'] = dhcp_helper_str
-        device.custom_field_data['LAN_IP'] = int(lan_ip_obj.pk) if lan_ip_obj else None
-        device.custom_field_data['Additional_LAN_IP'] = new_additional_pks
         device.custom_field_data['PID'] = service_id
 
         device.save()
@@ -600,6 +596,12 @@ class CustomDeviceForm(forms.ModelForm):
             or new_wan != self._original_wan
         ):
             self._create_interfaces_from_config(device)
+
+        lan_ip_str = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
+        lan_ip_obj = IPAddress.objects.filter(address=lan_ip_str, vrf=vrf).first() if lan_ip_str else None
+        device.custom_field_data['LAN_IP'] = int(lan_ip_obj.pk) if lan_ip_obj else None
+        device.custom_field_data['Additional_LAN_IP'] = new_additional_pks
+        device.save() 
 
         device.refresh_from_db()
         return device
