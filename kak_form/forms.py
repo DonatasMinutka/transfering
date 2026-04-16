@@ -252,8 +252,8 @@ class CustomDeviceForm(forms.ModelForm):
 
     def _check_duplicate_ip(self, ip_address, vrf, extra_exclude_pks=None):
         interface_ct = ContentType.objects.get_for_model(Interface)
+        qs = IPAddress.objects.filter(address=ip_address, vrf=vrf) 
 
-        qs = IPAddress.objects.filter(address=ip_address)
 
         if self.instance.pk:
             own_iface_ids = list(
