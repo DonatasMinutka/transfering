@@ -13,7 +13,8 @@ import ipaddress
 from tenancy.models import TenantGroup
 import logging
 from extras.models import Tag
-
+from django.db import transaction
+from extras.models import CustomField
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +79,6 @@ class CustomDeviceForm(forms.ModelForm):
         widget=forms.HiddenInput(attrs={'id': 'id_additional_lan_ips'}),
         label="Additional LAN IPs",
     )
-    Service_ID = forms.IntegerField(
-        required=True,
-        widget=forms.NumberInput(attrs={'placeholder': 'xxxxxxxx', 'class': 'form-control'}),
-        label="PID",
-    )
     Enable_DHCP = forms.BooleanField(
         required=False,
         label="Enable DHCP",
@@ -134,7 +130,14 @@ class CustomDeviceForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
+        try:
+            pid_cf = CustomField.objects.get(name='PID')
+            self.fields['cf_pid'] = pid_cf.to_form_field()
+            self.fields['cf_pid'].widget.attrs.update({'class': 'form-control'})
+            if self.instance and self.instance.pk:
+                self.fields['cf_pid'].initial = self.instance.custom_field_data.get('PID')
+        except CustomField.DoesNotExist:
+            pass
         self.fields['device_type'] = DynamicModelChoiceField(
             queryset=DeviceType.objects.all(),
             query_params={'tag': '$Services'},
@@ -215,7 +218,6 @@ class CustomDeviceForm(forms.ModelForm):
             self.fields['Services'].initial = kak_data.get('services', '')
             self.fields['Given_WAN_Address'].initial = kak_data.get('wan', '')
             self.fields['LAN_IP_Address_And_Subnet_Mask'].initial = kak_data.get('lan', '')
-            self.fields['Service_ID'].initial = kak_data.get('service_id', '')
             self.fields['DHCP_HELPER'].initial = kak_data.get('dhcp_helper', '')
 
             additional = kak_data.get('additional_lan_ips', [])
@@ -248,7 +250,8 @@ class CustomDeviceForm(forms.ModelForm):
         if not device_type or not service or not device_type.manufacturer:
             return None
         search_name = f"{device_type.manufacturer}_{device_type.model}_{service}".replace(' ', '_')
-        return ConfigTemplate.objects.filter(name__icontains=search_name).first()
+        print(f"[config template lookup] search_name='{search_name}'")
+        return ConfigTemplate.objects.filter(name=search_name).first()
 
     def _check_duplicate_ip(self, ip_address, vrf, extra_exclude_pks=None):
         interface_ct = ContentType.objects.get_for_model(Interface)
@@ -293,10 +296,16 @@ class CustomDeviceForm(forms.ModelForm):
 
     def clean(self):
         cleaned_data = super().clean()
+        pid = cleaned_data.get('cf_pid')
+        if pid:
+            qs = Device.objects.filter(custom_field_data__PID=pid)
+            if self.instance and self.instance.pk:
+                 qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise forms.ValidationError({'cf_pid': f'PID {pid} is already in use by another device.'})
 
         lan_ip = cleaned_data.get('LAN_IP_Address_And_Subnet_Mask')
         wan_ip = cleaned_data.get('Given_WAN_Address')
-        service_id = cleaned_data.get('Service_ID')
         tenant = cleaned_data.get('tenant')
         name = cleaned_data.get('name')
         site = cleaned_data.get('site')
@@ -306,13 +315,6 @@ class CustomDeviceForm(forms.ModelForm):
         enable_dhcp = cleaned_data.get('Enable_DHCP')
         dhcp_ranges_str = cleaned_data.get('DHCP_Ranges', '')
         additional_lan_raw = cleaned_data.get('Additional_LAN_IPs', '')
-        service_id = cleaned_data.get('Service_ID')
-        if service_id:
-            qs = Device.objects.filter(custom_field_data__PID=service_id)
-            if self.instance.pk:
-                qs = qs.exclude(pk=self.instance.pk)
-            if qs.exists():
-                raise forms.ValidationError(f'A device with PID "{service_id}" already exists.')
         additional_lan_ips = self._parse_additional_lan_ips(additional_lan_raw)
         for ip_cidr in additional_lan_ips:
             if '/' not in ip_cidr:
@@ -406,16 +408,15 @@ class CustomDeviceForm(forms.ModelForm):
                 raise forms.ValidationError(
                     f"Additional LAN IP '{extra_ip}' conflicts with the WAN IP."
                 )
-        
-        if service_id:
-            if service_id < 10000000 or service_id > 99999999:
-                raise forms.ValidationError("Service ID must be exactly 8 digits.")
-   
+    
 
         vrf = None
         if tenant:
             try:
-                vrf = VRF.objects.filter(tenant=tenant).first()
+                vrf, _ = VRF.objects.get_or_create(
+                    tenant=tenant,
+                    defaults={'name': f"vrf-{tenant.name.lower()}"},
+                )
             except Exception:
                 pass
 
@@ -480,7 +481,23 @@ class CustomDeviceForm(forms.ModelForm):
    
     def save(self, commit=True):
         device = super().save(commit=False)
+        if not device.config_template:
+            auto_template = self._get_auto_config_template()
+            if auto_template:
+                device.config_template = auto_template
+
+        if not commit:
+            return device
         
+        old_tenant = None
+        old_vrf = None
+        if self.instance.pk:
+            try:
+                old_device = Device.objects.get(pk=self.instance.pk)
+                old_tenant = old_device.tenant
+                old_vrf = self._get_vrf_for_device(old_device)
+            except Device.DoesNotExist:
+                pass
         if not device.config_template:
             auto_template = self._get_auto_config_template()
             if auto_template:
@@ -491,6 +508,26 @@ class CustomDeviceForm(forms.ModelForm):
         
         device.save()
 
+        new_tenant = device.tenant
+        new_vrf = self._get_vrf_for_device(device)
+
+        if old_tenant and old_tenant != new_tenant:
+            logger.info(f"Tenant changed from '{old_tenant}' to '{new_tenant}', migrating IPs...")
+            interface_ct = ContentType.objects.get_for_model(Interface)
+            own_iface_ids = list(
+                Interface.objects.filter(device=device).values_list('id', flat=True)
+            )
+            IPAddress.objects.filter(
+                assigned_object_type=interface_ct,
+                assigned_object_id__in=own_iface_ids,
+            ).update(tenant=new_tenant, vrf=new_vrf)
+
+            old_kak_data = (device.local_context_data or {}).get('KAK_DATA', {})
+            tracked_pks = old_kak_data.get('additional_lan_ip_pks', [])
+            if tracked_pks:
+                IPAddress.objects.filter(pk__in=tracked_pks).update(
+                    tenant=new_tenant, vrf=new_vrf
+                )
         service = self.data.get('Services')
         SERVICES_WITH_SLA = {
             'capn', 'internet', 'isop', 'nkdps',
@@ -518,8 +555,6 @@ class CustomDeviceForm(forms.ModelForm):
         enable_dhcp_helper = self.cleaned_data.get('Enable_DHCP_HELPER', False)
         dhcp_helper_str = self.cleaned_data.get('DHCP_HELPER', '') if enable_dhcp_helper else ''
         additional_lan_ips = self.cleaned_data.get('Additional_LAN_IPs', [])
-        service_id = self.cleaned_data.get('Service_ID')
-
         vrf = self._get_vrf_for_device(device)
 
         if not device.local_context_data:
@@ -550,7 +585,6 @@ class CustomDeviceForm(forms.ModelForm):
             'services': self.cleaned_data.get('Services', ''),
             'wan': self.cleaned_data.get('Given_WAN_Address', ''),
             'lan': self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', ''),
-            'service_id': service_id,
             'capn': self.cleaned_data.get('CAPN_Address', ''),
             'cellular': self.cleaned_data.get('Cellular', ''),
             'tunnel': self.cleaned_data.get('Tunnel', ''),
@@ -580,8 +614,18 @@ class CustomDeviceForm(forms.ModelForm):
 
 
         device.custom_field_data['DHCP_Helper'] = dhcp_helper_str
-        device.custom_field_data['PID'] = service_id
-
+        pid_value = self.cleaned_data.get('cf_pid')
+        try:
+            pid_cf = CustomField.objects.get(name='PID')
+            device.custom_field_data['PID'] = None
+            device.save()
+            if Device.objects.filter(custom_field_data__PID=pid_value).exclude(pk=device.pk).exists():
+                raise forms.ValidationError({'cf_pid': f'PID {pid_value} is already in use by another device.'})
+        except forms.ValidationError:
+            raise
+        except Exception as e:
+            raise forms.ValidationError(str(e))
+        device.custom_field_data['PID'] = pid_value
         device.save()
 
         new_service = device.local_context_data['KAK_DATA']['services']
@@ -607,73 +651,114 @@ class CustomDeviceForm(forms.ModelForm):
         return device
 
     def _create_interfaces_from_config(self, device):
+        kak_data = device.local_context_data.get('KAK_DATA', {})
+        service = kak_data.get('services', '')
+        interfaces_to_create = self._get_default_interfaces_for_service(service, device)
+        if not interfaces_to_create:
+            logger.warning(f"No interfaces returned for service '{service}' on {device.name}, aborting.")
+            return
+
+        vrf = self._get_vrf_for_device(device)
         try:
-            kak_data = device.local_context_data.get('KAK_DATA', {})
-            service  = kak_data.get('services', '')
-            if not service:
-                logger.warning(f"No service defined for {device.name}")
-                return
+            with transaction.atomic():
+                Device.objects.filter(pk=device.pk).update(primary_ip4=None)
+                device.primary_ip4 = None
+                device.interfaces.all().delete()
 
-            device.interfaces.all().delete()
-            interfaces_to_create = self._get_default_interfaces_for_service(service, device)
-            logger.info(f"Creating {len(interfaces_to_create)} interfaces for service: {service}")
+                interface_map = {}
+                primary_ip_obj = None
+                creation_errors = []
 
-            vrf            = self._get_vrf_for_device(device)
-            interface_map  = {}
-            primary_ip_obj = None
-
-            for iface_data in interfaces_to_create:
-                try:
-                    interface = Interface.objects.create(
-                        device=device,
-                        name=iface_data['name'],
-                        type=iface_data['type'],
-                        enabled=iface_data.get('enabled', True),
-                        description=iface_data.get('description', ''),
-                    )
-                    interface_map[iface_data['name']] = interface
-
-                    if iface_data.get('ip'):
-                        ip_obj, _ = IPAddress.objects.get_or_create(
-                            address=iface_data['ip'],
-                            vrf=vrf,
-                            tenant=device.tenant,
-                            defaults={'status': 'active'},
-                        )
-                        ip_obj.assigned_object = interface
-                        ip_obj.save()
-                        if iface_data.get('is_primary'):
-                            primary_ip_obj = ip_obj
-                except Exception as e:
-                    logger.error(f"Error creating interface {iface_data['name']}: {e}", exc_info=True)
-
-            for rel_key in ('lag', 'bridge', 'parent'):
                 for iface_data in interfaces_to_create:
-                    target_name = iface_data.get(rel_key)
-                    if not target_name:
-                        continue
-                    child  = interface_map.get(iface_data['name'])
-                    target = interface_map.get(target_name)
-                    if child and target:
+                    try:
+                        interface = Interface.objects.create(
+                            device=device,
+                            name=iface_data['name'],
+                            type=iface_data['type'],
+                            enabled=iface_data.get('enabled', True),
+                            description=iface_data.get('description', ''),
+                        )
+                        interface_map[iface_data['name']] = interface
+                        logger.info(f"Created interface '{iface_data['name']}' on {device.name}")
+
+                        if iface_data.get('ip'):
+                            existing_ip = IPAddress.objects.filter(
+                                address=iface_data['ip'],
+                                vrf=vrf,
+                            ).exclude(
+                                assigned_object_id__in=list(
+                                    Interface.objects.filter(device=device).values_list('id', flat=True)
+                                )
+                            ).first()
+
+                            if existing_ip and existing_ip.assigned_object is not None:
+                                raise ValueError(
+                                    f"IP {iface_data['ip']} is already assigned to another device/interface."
+                                )
+
+                            ip_obj, created = IPAddress.objects.get_or_create(
+                                address=iface_data['ip'],
+                                vrf=vrf,
+                                tenant=device.tenant,
+                                defaults={'status': 'active'},
+                            )
+                            ip_obj.assigned_object = interface
+                            ip_obj.save()
+                            logger.info(f"{'Created' if created else 'Assigned existing'} IP {ip_obj.address} to {interface.name}")
+
+                            if iface_data.get('is_primary'):
+                                primary_ip_obj = ip_obj
+
+                    except Exception as e:
+                        logger.error(f"Error creating interface '{iface_data['name']}': {e}", exc_info=True)
+                        creation_errors.append(iface_data['name'])
+
+                if creation_errors:
+                    raise ValueError(
+                        f"Failed to create the following interfaces: {', '.join(creation_errors)}. "
+                        f"Rolling back all interface changes for {device.name}."
+                    )
+
+                for rel_key in ('lag', 'bridge', 'parent'):
+                    for iface_data in interfaces_to_create:
+                        target_name = iface_data.get(rel_key)
+                        if not target_name:
+                            continue
+
+                        child = interface_map.get(iface_data['name'])
+                        target = interface_map.get(target_name)
+
+                        if not child or not target:
+                            raise ValueError(
+                                f"Cannot assign {rel_key.upper()}: "
+                                f"'{iface_data['name']}' -> '{target_name}' — one or both interfaces not found."
+                            )
+
                         try:
                             setattr(child, rel_key, target)
                             child.save()
                             logger.info(f"Assigned {iface_data['name']} -> {rel_key.upper()} {target_name}")
                         except Exception as e:
-                            logger.error(f"Error assigning {rel_key} for {iface_data['name']}: {e}", exc_info=True)
-                    else:
-                        logger.error(f"{rel_key.upper()} assignment failed: {iface_data['name']} -> {target_name}")
+                            raise ValueError(
+                                f"Error assigning {rel_key} for '{iface_data['name']}': {e}"
+                            )
 
-            Device.objects.filter(pk=device.pk).update(
-                primary_ip4=primary_ip_obj if primary_ip_obj else None
-            )
-            if primary_ip_obj:
-                logger.info(f"Set primary IP: {primary_ip_obj.address}")
+                device.primary_ip4 = primary_ip_obj
+                device.save(update_fields=['primary_ip4'])
+
+                if primary_ip_obj:
+                    logger.info(f"Set primary IP for {device.name}: {primary_ip_obj.address}")
+                else:
+                    logger.warning(f"No primary IP was set for {device.name}.")
 
         except Exception as e:
-            logger.error(f"Failed to create interfaces for {device.name}: {e}", exc_info=True)
+            logger.error(
+                f"Interface creation failed for {device.name}, all changes rolled back. Reason: {e}",
+                exc_info=True,
+            )
+            raise
 
-    def _calculate_first_host(self, given_wan_ip):
+    def _calculate_wan_ip_from_29(self, given_wan_ip):
         if not given_wan_ip:
             return None
         try:
@@ -712,7 +797,7 @@ class CustomDeviceForm(forms.ModelForm):
         tunnel   = kak_data.get('tunnel', '')
         cellular = kak_data.get('cellular', '')
 
-        calculated_wan_ip         = self._calculate_first_host(wan_ip)
+        calculated_wan_ip         = self._calculate_wan_ip_from_29(wan_ip)
         calculated_wan_ip_from_30 = self._calculate_wan_ip_from_30(wan_ip)
 
         interfaces = []
@@ -782,7 +867,7 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'internal',  'type': 'bridge',     'enabled': True,  'ip': lan_ip},
                     {'name': 'internal1', 'type': '1000base-t', 'enabled': True},
                     {'name': 'internal2', 'type': '1000base-t', 'enabled': True},
-                    {'name': 'internal3', 'type': '1000base-t', 'enabled': True},
+                    {'name': 'internal3', 'type': '1000base-t', 'enabled': True}, 
                     {'name': 'internal4', 'type': '1000base-t', 'enabled': True},
                     {'name': 'internal5', 'type': '1000base-t', 'enabled': True},
                     {'name': 'a',         'type': '1000base-t', 'enabled': True},
@@ -985,9 +1070,17 @@ class CustomDeviceForm(forms.ModelForm):
 
     def _get_vrf_for_device(self, device):
         if device.tenant:
-            return VRF.objects.filter(tenant=device.tenant).first()
+            vrf = VRF.objects.filter(tenant=device.tenant).first()
+            if not vrf:
+                vrf = VRF.objects.create(name=f"vrf-{device.tenant.name.lower()}", tenant=device.tenant)
+                try:
+                    kak_tag = Tag.objects.get(slug='kak-form')
+                    vrf.tags.add(kak_tag)
+                except Tag.DoesNotExist:
+                    pass
+                logger.info(f"Created VRF '{vrf.name}' for tenant '{device.tenant.name}'")
+            return vrf
         return None
-
 
 class NewSiteForm(SiteForm):
     class Meta:
@@ -1082,7 +1175,7 @@ class NewTenantForm(TenantForm):
             kak_tag = Tag.objects.get(slug='kak-form')
             tenant.tags.add(kak_tag) 
             
-            vrf_name = f"vrf-{cpe_group.name.lower()}-{tenant.name.lower()}-default"
+            vrf_name = f"vrf-{tenant.name.lower()}"
             if cpe_group:
                 vrf, _ = VRF.objects.get_or_create(   
                     name=vrf_name,
