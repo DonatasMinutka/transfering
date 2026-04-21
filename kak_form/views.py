@@ -4,7 +4,6 @@ from tenancy.models import Tenant
 from . import forms
 from ipam.models import IPAddress
 
-
 class KakDeviceEditView(generic.ObjectEditView):
     queryset = Device.objects.all()
     form = forms.CustomDeviceForm

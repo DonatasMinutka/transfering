@@ -50,20 +50,32 @@ class CustomDeviceForm(forms.ModelForm):
         ('4g', '4G'),
         ('4g_apn', '4G APN'),
     ]
-
+    SLA_CHOICES = [
+        ('', '--- Select SLA ---'),
+        ('sla0', 'SLA0'),
+        ('sla1', 'SLA1'),
+        ('sla2', 'SLA2'),
+    ]
+    SLA_TAG_SLUGS = ['sla0', 'sla1', 'sla2']
     Services = forms.ChoiceField(
         choices=SERVICE_CHOICES,
         required=True,
         label="Services / Paslaugos",
         widget=forms.Select(attrs={'class': 'form-control'}),
     )
+    SLA = forms.ChoiceField(
+        choices=SLA_CHOICES,
+        required=True,
+        label="SLA",
+        widget=forms.Select(attrs={'class': 'form-control'}),
+    ) 
     Given_WAN_Address = forms.CharField(
         max_length=50,
         required=False,
         validators=[validate_ipv4_cidr],
         widget=forms.TextInput(attrs={'placeholder': '192.168.1.1', 'class': 'form-control'}),
         label="WAN IP Address",
-    )
+    ) 
     LAN_IP_Address_And_Subnet_Mask = forms.CharField(
         max_length=50,
         required=True,
@@ -73,7 +85,7 @@ class CustomDeviceForm(forms.ModelForm):
             'class': 'form-control',
         }),
         label="LAN IP Address Ir Subnet",
-    )
+    )   
     Additional_LAN_IPs = forms.CharField(
         required=False,
         widget=forms.HiddenInput(attrs={'id': 'id_additional_lan_ips'}),
@@ -83,7 +95,7 @@ class CustomDeviceForm(forms.ModelForm):
         required=False,
         label="Enable DHCP",
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input', 'id': 'enable_dhcp_checkbox'}),
-    )
+    )   
     DHCP_Ranges = forms.CharField(
         required=False,
         widget=forms.HiddenInput(attrs={'id': 'id_dhcp_ranges'}),
@@ -127,17 +139,18 @@ class CustomDeviceForm(forms.ModelForm):
         model = Device
         fields = ['name', 'role', 'device_type', 'tenant', 'site']
 
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         try:
             pid_cf = CustomField.objects.get(name='PID')
             self.fields['cf_pid'] = pid_cf.to_form_field()
             self.fields['cf_pid'].widget.attrs.update({'class': 'form-control'})
+            self.fields['cf_pid'].required = True
             if self.instance and self.instance.pk:
                 self.fields['cf_pid'].initial = self.instance.custom_field_data.get('PID')
         except CustomField.DoesNotExist:
             pass
+
         self.fields['device_type'] = DynamicModelChoiceField(
             queryset=DeviceType.objects.all(),
             query_params={'tag': '$Services'},
@@ -171,12 +184,18 @@ class CustomDeviceForm(forms.ModelForm):
         self._original_device_type = None
         self._original_lan = None
         self._original_wan = None
+
         if self.instance and self.instance.pk:
-            kak_data = (self.instance.local_context_data or {}).get('KAK_DATA', {})
-            self._original_service = kak_data.get('services', '')
-            self._original_lan = kak_data.get('lan', '')
-            self._original_wan = kak_data.get('wan', '')
+            all_service_slugs = {choice[0] for choice in self.SERVICE_CHOICES if choice[0]}
+            orig_service_tag = self.instance.tags.filter(slug__in=all_service_slugs).first()
+            self._original_service = orig_service_tag.slug if orig_service_tag else ''
             self._original_device_type = self.instance.device_type
+            self._original_wan = str(self.instance.primary_ip4.address) if self.instance.primary_ip4 else ''
+            for iface in self.instance.interfaces.prefetch_related('ip_addresses').all():
+                first_ip = iface.ip_addresses.first()
+                if first_ip and iface.name in ['lan', 'internal', 'bridge1', 'Vlan1', 'lan1']:
+                    self._original_lan = str(first_ip.address)
+                    break
 
         self.fields['name'].help_text = mark_safe(
             '<script src="/static/kak_form/js/auto_name.js"></script>'
@@ -210,30 +229,84 @@ class CustomDeviceForm(forms.ModelForm):
 
         if self.instance and self.instance.pk:
             kak_data = (self.instance.local_context_data or {}).get('KAK_DATA', {})
+
+            self.fields['Given_WAN_Address'].initial = (
+                str(self.instance.primary_ip4.address) if self.instance.primary_ip4 else ''
+            )
+
+            lan_ip_initial = tunnel_initial = cellular_initial = ''
+            for iface in self.instance.interfaces.prefetch_related('ip_addresses').all():
+                first_ip = iface.ip_addresses.first()
+                ip_str = str(first_ip.address) if first_ip else ''
+                if not lan_ip_initial and iface.name in ['lan', 'internal', 'bridge1', 'Vlan1', 'lan1']:
+                    lan_ip_initial = ip_str
+                elif not tunnel_initial and iface.name == 'Tunnel0':
+                    tunnel_initial = ip_str
+                elif not cellular_initial and iface.name == 'Cellular0':
+                    cellular_initial = ip_str
+
+            self.fields['LAN_IP_Address_And_Subnet_Mask'].initial = lan_ip_initial
+            self.fields['Tunnel'].initial = tunnel_initial
+            self.fields['Cellular'].initial = cellular_initial
+
             self.fields['CAPN_Address'].initial = kak_data.get('capn', '')
-            self.fields['Cellular'].initial = kak_data.get('cellular', '')
-            self.fields['Tunnel'].initial = kak_data.get('tunnel', '')
-            self.fields['Enable_DHCP'].initial = kak_data.get('enable_dhcp', False)
-            self.fields['Enable_DHCP_HELPER'].initial = kak_data.get('enable_dhcp_helper', False)
-            self.fields['Services'].initial = kak_data.get('services', '')
-            self.fields['Given_WAN_Address'].initial = kak_data.get('wan', '')
-            self.fields['LAN_IP_Address_And_Subnet_Mask'].initial = kak_data.get('lan', '')
-            self.fields['DHCP_HELPER'].initial = kak_data.get('dhcp_helper', '')
+            dhcp_cf = (self.instance.custom_field_data or {}).get('DHCP', '')
+            self.fields['Enable_DHCP'].initial = bool(dhcp_cf)
+            all_service_slugs = {choice[0] for choice in self.SERVICE_CHOICES if choice[0]}
+            existing_service_tag = self.instance.tags.filter(slug__in=all_service_slugs).first()
+            if existing_service_tag:
+                self.fields['Services'].initial = existing_service_tag.slug
+            dhcp_helper_cf = (self.instance.custom_field_data or {}).get('DHCP_Helper', '')
+            self.fields['Enable_DHCP_HELPER'].initial = bool(dhcp_helper_cf)
+            self.fields['DHCP_HELPER'].initial = dhcp_helper_cf
+            existing_sla_tag = self.instance.tags.filter(slug__in=self.SLA_TAG_SLUGS).first()
+            if existing_sla_tag:
+                self.fields['SLA'].initial = existing_sla_tag.slug
 
             additional = kak_data.get('additional_lan_ips', [])
             self.fields['Additional_LAN_IPs'].initial = (
                 ';'.join(additional) if isinstance(additional, list) else (additional or '')
             )
 
-            dhcp_ranges = kak_data.get('dhcp_ranges', '')
-            if isinstance(dhcp_ranges, list):
-                dhcp_ranges = ';'.join(dhcp_ranges)
-            if not dhcp_ranges:
-                old_start = kak_data.get('dhcp_start', '')
-                old_end = kak_data.get('dhcp_end', '')
-                if old_start and old_end:
-                    dhcp_ranges = f"{old_start}-{old_end}"
-            self.fields['DHCP_Ranges'].initial = dhcp_ranges
+        if dhcp_cf:
+            import ipaddress as _ip
+            try:
+                iface = _ip.IPv4Interface(lan_ip_initial)
+                network = iface.network
+                net_addr = int(network.network_address)
+                broadcast = int(network.broadcast_address)
+                first_host = net_addr + 1
+                last_host = broadcast - 1
+                prefix_str = str(network.network_address).rsplit('.', 1)[0]
+                total_hosts = last_host - first_host + 1
+
+                parts = []
+                for rng in dhcp_cf.split(','):
+                    rng = rng.strip()
+                    if '-' not in rng:
+                        continue
+                    s, e = rng.split('-', 1)
+                    start_ip = _ip.IPv4Address(f"{prefix_str}.{s.strip()}")
+                    end_ip   = _ip.IPv4Address(f"{prefix_str}.{e.strip()}")
+                    start_int = int(start_ip)
+                    end_int   = int(end_ip)
+
+                    if first_host <= start_int <= last_host and first_host <= end_int <= last_host:
+                        parts.append(f"{start_ip}-{end_ip}")
+                    else:
+                        if total_hosts >= 100:
+                            new_start = _ip.IPv4Address(net_addr + 100)
+                            new_end   = _ip.IPv4Address(net_addr + 200)
+                        else:
+                            new_start = _ip.IPv4Address(first_host)
+                            new_end   = _ip.IPv4Address(last_host)
+                        parts.append(f"{new_start}-{new_end}")
+
+                dhcp_ranges_full = ';'.join(parts)
+            except Exception:
+                dhcp_ranges_full = dhcp_cf
+
+        self.fields['DHCP_Ranges'].initial = dhcp_ranges_full
 
 
     def _get_auto_config_template(self):
@@ -249,8 +322,7 @@ class CustomDeviceForm(forms.ModelForm):
                 return None
         if not device_type or not service or not device_type.manufacturer:
             return None
-        search_name = f"{device_type.manufacturer}_{device_type.model}_{service}".replace(' ', '_')
-        print(f"[config template lookup] search_name='{search_name}'")
+        search_name = f"KAK-FORM_{device_type.manufacturer}_{device_type.model}_{service}".replace(' ', '_')
         return ConfigTemplate.objects.filter(name=search_name).first()
 
     def _check_duplicate_ip(self, ip_address, vrf, extra_exclude_pks=None):
@@ -295,196 +367,200 @@ class CustomDeviceForm(forms.ModelForm):
         return [ip.strip() for ip in raw.split(';') if ip.strip()]
 
     def clean(self):
-        cleaned_data = super().clean()
-        pid = cleaned_data.get('cf_pid')
-        if pid:
-            qs = Device.objects.filter(custom_field_data__PID=pid)
-            if self.instance and self.instance.pk:
-                 qs = qs.exclude(pk=self.instance.pk)
-            if qs.exists():
-                raise forms.ValidationError({'cf_pid': f'PID {pid} is already in use by another device.'})
+            cleaned_data = super().clean()
+            pid = cleaned_data.get('cf_pid')
 
-        lan_ip = cleaned_data.get('LAN_IP_Address_And_Subnet_Mask')
-        wan_ip = cleaned_data.get('Given_WAN_Address')
-        tenant = cleaned_data.get('tenant')
-        name = cleaned_data.get('name')
-        site = cleaned_data.get('site')
-        device_type = cleaned_data.get('device_type')
-        role = cleaned_data.get('role')
-        config_template = cleaned_data.get('config_template')
-        enable_dhcp = cleaned_data.get('Enable_DHCP')
-        dhcp_ranges_str = cleaned_data.get('DHCP_Ranges', '')
-        additional_lan_raw = cleaned_data.get('Additional_LAN_IPs', '')
-        additional_lan_ips = self._parse_additional_lan_ips(additional_lan_raw)
-        for ip_cidr in additional_lan_ips:
-            if '/' not in ip_cidr:
-                raise forms.ValidationError(
-                    f"Additional LAN IP '{ip_cidr}' must include CIDR notation (e.g. 10.0.0.1/24)."
-                )
-            try:
-                ipaddress.IPv4Network(ip_cidr, strict=False)
-            except ValueError:
-                raise forms.ValidationError(
-                    f"Additional LAN IP '{ip_cidr}' is not a valid IPv4 CIDR address."
-                )
-        seen_additional = []
-        for ip_cidr in additional_lan_ips:
-            if ip_cidr in seen_additional:
-                raise forms.ValidationError(
-                    f"Additional LAN IP '{ip_cidr}' is listed more than once."
-                )
-            seen_additional.append(ip_cidr)
-        cleaned_data['Additional_LAN_IPs'] = additional_lan_ips
 
-        if enable_dhcp and dhcp_ranges_str:
-            ranges = [r.strip() for r in dhcp_ranges_str.split(';') if r.strip()]
-            if len(ranges) > 10:
-                raise forms.ValidationError("A maximum of 10 DHCP ranges is allowed.")
-            for rng in ranges:
-                if '-' not in rng:
+            lan_ip = cleaned_data.get('LAN_IP_Address_And_Subnet_Mask')
+            wan_ip = cleaned_data.get('Given_WAN_Address')
+            tenant = cleaned_data.get('tenant')
+            name = cleaned_data.get('name')
+            site = cleaned_data.get('site')
+            device_type = cleaned_data.get('device_type')
+            role = cleaned_data.get('role')
+            config_template = cleaned_data.get('config_template')
+            enable_dhcp = cleaned_data.get('Enable_DHCP')
+            dhcp_ranges_str = cleaned_data.get('DHCP_Ranges', '')
+            additional_lan_raw = cleaned_data.get('Additional_LAN_IPs', '')
+            additional_lan_ips = self._parse_additional_lan_ips(additional_lan_raw)
+            for ip_cidr in additional_lan_ips:
+                if '/' not in ip_cidr:
                     raise forms.ValidationError(
-                        f"Invalid DHCP range format: '{rng}'. "
-                        "Expected format: 192.168.1.100-192.168.1.200"
+                        f"Additional LAN IP '{ip_cidr}' must include CIDR notation (e.g. 10.0.0.1/24)."
                     )
-                start, end = (s.strip() for s in rng.split('-', 1))
                 try:
-                    ipaddress.IPv4Address(start)
-                    ipaddress.IPv4Address(end)
+                    ipaddress.IPv4Network(ip_cidr, strict=False)
                 except ValueError:
-                    raise forms.ValidationError(f"Invalid IP address in DHCP range: '{rng}'")
-                if not self._check_dhcp_range(lan_ip, start, end):
-                    raise forms.ValidationError(f"DHCP range '{rng}' is outside the LAN subnet.")
+                    raise forms.ValidationError(
+                        f"Additional LAN IP '{ip_cidr}' is not a valid IPv4 CIDR address."
+                    )
+            seen_additional = []
+            for ip_cidr in additional_lan_ips:
+                if ip_cidr in seen_additional:
+                    raise forms.ValidationError(
+                        f"Additional LAN IP '{ip_cidr}' is listed more than once."
+                    )
+                seen_additional.append(ip_cidr)
+            cleaned_data['Additional_LAN_IPs'] = additional_lan_ips
 
-        if name:
-            qs = Device.objects.filter(name=name)
+            if enable_dhcp and dhcp_ranges_str:
+                ranges = [r.strip() for r in dhcp_ranges_str.split(';') if r.strip()]
+                if len(ranges) > 10:
+                    raise forms.ValidationError("A maximum of 10 DHCP ranges is allowed.")
+                for rng in ranges:
+                    if '-' not in rng:
+                        raise forms.ValidationError(
+                            f"Invalid DHCP range format: '{rng}'. "
+                            "Expected format: 192.168.1.100-192.168.1.200"
+                        )
+                    start, end = (s.strip() for s in rng.split('-', 1))
+                    try:
+                        ipaddress.IPv4Address(start)
+                        ipaddress.IPv4Address(end)
+                    except ValueError:
+                        raise forms.ValidationError(f"Invalid IP address in DHCP range: '{rng}'")
+                    if not self._check_dhcp_range(lan_ip, start, end):
+                        raise forms.ValidationError(f"DHCP range '{rng}' is outside the LAN subnet.")
+
+            if name:
+                qs = Device.objects.filter(name=name)
+                if self.instance.pk:
+                    qs = qs.exclude(pk=self.instance.pk)
+                if qs.exists():
+                    raise forms.ValidationError(f'A device with name "{name}" already exists.')
+
+            def _host(cidr):
+                return cidr.split('/')[0] if cidr and '/' in cidr else (cidr or '')
+
+            if lan_ip and wan_ip and _host(lan_ip) == _host(wan_ip):
+                raise forms.ValidationError("WAN and LAN IP addresses cannot be the same.")
+            
+            service = cleaned_data.get('Services')
+            if service == 'nkdps' and wan_ip:
+                try:
+                    network = ipaddress.IPv4Network(wan_ip, strict=False)
+                    if network.prefixlen != 30:
+                        raise forms.ValidationError(
+                            f"NKDPS service requires the WAN IP address to use a /30 subnet "
+                            f"(e.g. 192.168.1.1/30). You entered '{wan_ip}' which has /{network.prefixlen}."
+                        )
+                except ValueError:
+                    pass 
+            if service == 'isop' and wan_ip:
+                try:
+                    network = ipaddress.IPv4Network(wan_ip, strict=False)
+                    if network.prefixlen != 29:
+                        raise forms.ValidationError(
+                            f"ISOP service requires the WAN IP address to use a /29 subnet "
+                            f"(e.g. 192.168.1.1/29). You entered '{wan_ip}' which has /{network.prefixlen}."
+                        )
+                except ValueError:
+                    pass 
+            if service == 'internet' and wan_ip:
+                try:
+                    network = ipaddress.IPv4Network(wan_ip, strict=False)
+                    if network.prefixlen != 24:
+                        raise forms.ValidationError(
+                            f"Internet service requires the WAN IP address to use a /24 subnet "
+                            f"(e.g. 192.168.1.1/24). You entered '{wan_ip}' which has /{network.prefixlen}."
+                        )
+                except ValueError:
+                    pass 
+            for extra_ip in additional_lan_ips:
+                if lan_ip and _host(extra_ip) == _host(lan_ip):
+                    raise forms.ValidationError(
+                        f"Additional LAN IP '{extra_ip}' is the same as the primary LAN IP."
+                    )
+                if wan_ip and _host(extra_ip) == _host(wan_ip):
+                    raise forms.ValidationError(
+                        f"Additional LAN IP '{extra_ip}' conflicts with the WAN IP."
+                    )
+
+            vrf = None
+            if tenant:
+                try:
+                    vrf, _ = VRF.objects.get_or_create(
+                        tenant=tenant,
+                        defaults={'name': f"vrf-{tenant.name.lower()}"},
+                    )
+                except Exception:
+                    pass
+
+            existing_additional_pks = []
             if self.instance.pk:
-                qs = qs.exclude(pk=self.instance.pk)
-            if qs.exists():
-                raise forms.ValidationError(f'A device with name "{name}" already exists.')
+                kak_data = (self.instance.local_context_data or {}).get('KAK_DATA', {})
+                existing_additional_pks = kak_data.get('additional_lan_ip_pks', [])
 
-        def _host(cidr):
-            return cidr.split('/')[0] if cidr and '/' in cidr else (cidr or '')
+            if lan_ip:
+                self._check_duplicate_ip(lan_ip, vrf)
+            if wan_ip:
+                self._check_duplicate_ip(wan_ip, vrf)
+            for extra_ip in additional_lan_ips:
+                self._check_duplicate_ip(extra_ip, vrf, extra_exclude_pks=existing_additional_pks)
 
-        if lan_ip and wan_ip and _host(lan_ip) == _host(wan_ip):
-            raise forms.ValidationError("WAN and LAN IP addresses cannot be the same.")
-        
-        service = cleaned_data.get('Services')
-        if service == 'nkdps' and wan_ip:
+            if self.instance.pk:
+                validation_device = self.instance
+                validation_device.name = name
+                validation_device.site = site
+                validation_device.device_type = device_type
+                validation_device.role = role
+                validation_device.config_template = config_template
+            else:
+                validation_device = Device(
+                    name=name, site=site, device_type=device_type,
+                    role=role, config_template=config_template,
+                )
+
+            if not validation_device.custom_field_data:
+                validation_device.custom_field_data = {}
+            validation_device.custom_field_data['PID'] = pid
+
             try:
-                network = ipaddress.IPv4Network(wan_ip, strict=False)
-                if network.prefixlen != 30:
+                validation_device.full_clean(exclude=['custom_field_data', 'local_context_data'])
+            except ValidationError as e:
+                for field, errors in e.message_dict.items():
+                    if field == '__all__':
+                        continue
+                    for error in errors:
+                        raise forms.ValidationError(error)
+
+            service = cleaned_data.get('Services')
+            service_required_fields = {
+                'capn':         ['CAPN_Address', 'Given_WAN_Address'],
+                'internet':     ['Given_WAN_Address'],
+                'isop':         ['Given_WAN_Address'],
+                'wan_failover': ['Given_WAN_Address'],
+                'nkdps':        ['Given_WAN_Address'],
+                '4g_apn':       ['CAPN_Address', 'Given_WAN_Address', 'Tunnel', 'Cellular'],
+                '4g':           ['Given_WAN_Address', 'Tunnel', 'Cellular'],
+                'lte_5g_nokia': [],
+            }
+            all_conditional_fields = {'CAPN_Address', 'Given_WAN_Address', 'Tunnel', 'Cellular'}
+            required_fields = service_required_fields.get(service, [])
+
+            for field_name in required_fields:
+                if not cleaned_data.get(field_name):
+                    field_label = self.fields[field_name].label or field_name
                     raise forms.ValidationError(
-                        f"NKDPS service requires the WAN IP address to use a /30 subnet "
-                        f"(e.g. 192.168.1.1/30). You entered '{wan_ip}' which has /{network.prefixlen}."
+                        f'{field_label} is required when {service} service is selected.'
                     )
-            except ValueError:
-                pass 
-        if service == 'isop' and wan_ip:
-            try:
-                network = ipaddress.IPv4Network(wan_ip, strict=False)
-                if network.prefixlen != 29:
-                    raise forms.ValidationError(
-                        f"ISOP service requires the WAN IP address to use a /29 subnet "
-                        f"(e.g. 192.168.1.1/29). You entered '{wan_ip}' which has /{network.prefixlen}."
-                    )
-            except ValueError:
-                pass 
-        if service == 'internet' and wan_ip:
-            try:
-                network = ipaddress.IPv4Network(wan_ip, strict=False)
-                if network.prefixlen != 24:
-                    raise forms.ValidationError(
-                        f"Internet service requires the WAN IP address to use a /24 subnet "
-                        f"(e.g. 192.168.1.1/24). You entered '{wan_ip}' which has /{network.prefixlen}."
-                    )
-            except ValueError:
-                pass 
-        for extra_ip in additional_lan_ips:
-            if lan_ip and _host(extra_ip) == _host(lan_ip):
-                raise forms.ValidationError(
-                    f"Additional LAN IP '{extra_ip}' is the same as the primary LAN IP."
-                )
-            if wan_ip and _host(extra_ip) == _host(wan_ip):
-                raise forms.ValidationError(
-                    f"Additional LAN IP '{extra_ip}' conflicts with the WAN IP."
-                )
-    
+            for field_name in all_conditional_fields - set(required_fields):
+                self.errors.pop(field_name, None)
+                cleaned_data[field_name] = ''
 
-        vrf = None
-        if tenant:
-            try:
-                vrf, _ = VRF.objects.get_or_create(
-                    tenant=tenant,
-                    defaults={'name': f"vrf-{tenant.name.lower()}"},
-                )
-            except Exception:
-                pass
+            return cleaned_data
 
-        existing_additional_pks = []
-        if self.instance.pk:
-            kak_data = (self.instance.local_context_data or {}).get('KAK_DATA', {})
-            existing_additional_pks = kak_data.get('additional_lan_ip_pks', [])
-
-
-        if lan_ip:
-            self._check_duplicate_ip(lan_ip, vrf)
-        if wan_ip:
-            self._check_duplicate_ip(wan_ip, vrf)
-        for extra_ip in additional_lan_ips:
-            self._check_duplicate_ip(extra_ip, vrf, extra_exclude_pks=existing_additional_pks)
-
-        if self.instance.pk:
-            validation_device = self.instance
-            validation_device.name = name
-            validation_device.site = site
-            validation_device.device_type = device_type
-            validation_device.role = role
-            validation_device.config_template = config_template
-        else:
-            validation_device = Device(
-                name=name, site=site, device_type=device_type,
-                role=role, config_template=config_template,
-            )
-        try:
-            validation_device.full_clean(exclude=['custom_field_data', 'local_context_data'])
-        except ValidationError as e:
-            for field, errors in e.message_dict.items():
-                for error in errors:
-                    raise forms.ValidationError(error)
-
-        service = cleaned_data.get('Services')
-        service_required_fields = {
-            'capn':         ['CAPN_Address', 'Given_WAN_Address'],
-            'internet':     ['Given_WAN_Address'],
-            'isop':         ['Given_WAN_Address'],
-            'wan_failover': ['Given_WAN_Address'],
-            'nkdps':        ['Given_WAN_Address'],
-            '4g_apn':       ['CAPN_Address', 'Given_WAN_Address', 'Tunnel', 'Cellular'],
-            '4g':           ['Given_WAN_Address', 'Tunnel', 'Cellular'],
-            'lte_5g_nokia': [],
-        }
-        all_conditional_fields = {'CAPN_Address', 'Given_WAN_Address', 'Tunnel', 'Cellular'}
-        required_fields = service_required_fields.get(service, [])
-
-        for field_name in required_fields:
-            if not cleaned_data.get(field_name):
-                field_label = self.fields[field_name].label or field_name
-                raise forms.ValidationError(
-                    f'{field_label} is required when {service} service is selected.'
-                )
-        for field_name in all_conditional_fields - set(required_fields):
-            self.errors.pop(field_name, None)
-            cleaned_data[field_name] = ''
-
-        return cleaned_data
-
-   
     def save(self, commit=True):
         device = super().save(commit=False)
         if not device.config_template:
             auto_template = self._get_auto_config_template()
             if auto_template:
                 device.config_template = auto_template
+
+        pid_value = self.cleaned_data.get('cf_pid')
+        if not device.custom_field_data:
+            device.custom_field_data = {}
+        device.custom_field_data['PID'] = pid_value
 
         if not commit:
             return device
@@ -528,27 +604,33 @@ class CustomDeviceForm(forms.ModelForm):
                 IPAddress.objects.filter(pk__in=tracked_pks).update(
                     tenant=new_tenant, vrf=new_vrf
                 )
-        service = self.data.get('Services')
-        SERVICES_WITH_SLA = {
-            'capn', 'internet', 'isop', 'nkdps',
-            'wan_failover', 'lte_5g_nokia', '4g', '4g_apn',
-        }
+        service = self.cleaned_data.get('Services', '')
 
         try:
-            sla_tag = Tag.objects.get(slug='sla0')
             kak_tag = Tag.objects.get(slug='kak-form')
             device.tags.add(kak_tag)
-
-            all_service_slugs = {choice[0] for choice in self.SERVICE_CHOICES if choice[0]}
-            old_service_tags = Tag.objects.filter(slug__in=all_service_slugs)
-            device.tags.remove(*old_service_tags)
-            device.tags.remove(sla_tag)
-
-            if service in SERVICES_WITH_SLA:
-                service_tag = Tag.objects.get(slug=service)
-                device.tags.add(service_tag, sla_tag)
         except Tag.DoesNotExist:
             pass
+
+        all_service_slugs = {choice[0] for choice in self.SERVICE_CHOICES if choice[0]}
+        old_service_tags = Tag.objects.filter(slug__in=all_service_slugs)
+        device.tags.remove(*old_service_tags)
+        if service:
+            try:
+                service_tag = Tag.objects.get(slug=service)
+                device.tags.add(service_tag)
+            except Tag.DoesNotExist:
+                logger.warning(f"Service tag '{service}' does not exist in NetBox.")
+
+        selected_sla = self.cleaned_data.get('SLA', '')
+        old_sla_tags = Tag.objects.filter(slug__in=self.SLA_TAG_SLUGS)
+        device.tags.remove(*old_sla_tags)
+        if selected_sla:
+            try:
+                sla_tag = Tag.objects.get(slug=selected_sla)
+                device.tags.add(sla_tag)
+            except Tag.DoesNotExist:
+                logger.warning(f"SLA tag '{selected_sla}' does not exist in NetBox.")
         
         enable_dhcp = self.cleaned_data.get('Enable_DHCP', False)
         dhcp_ranges_str = self.cleaned_data.get('DHCP_Ranges', '') if enable_dhcp else ''
@@ -582,16 +664,11 @@ class CustomDeviceForm(forms.ModelForm):
                 continue
 
         device.local_context_data['KAK_DATA'] = {
-            'services': self.cleaned_data.get('Services', ''),
             'wan': self.cleaned_data.get('Given_WAN_Address', ''),
             'lan': self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', ''),
             'capn': self.cleaned_data.get('CAPN_Address', ''),
             'cellular': self.cleaned_data.get('Cellular', ''),
             'tunnel': self.cleaned_data.get('Tunnel', ''),
-            'enable_dhcp': enable_dhcp,
-            'dhcp_ranges': [r.strip() for r in dhcp_ranges_str.split(';') if r.strip()] if dhcp_ranges_str else [],
-            'enable_dhcp_helper': enable_dhcp_helper,
-            'dhcp_helper': dhcp_helper_str,
             'additional_lan_ips': additional_lan_ips,
             'additional_lan_ip_pks': new_additional_pks,
         }
@@ -615,20 +692,11 @@ class CustomDeviceForm(forms.ModelForm):
 
         device.custom_field_data['DHCP_Helper'] = dhcp_helper_str
         pid_value = self.cleaned_data.get('cf_pid')
-        try:
-            pid_cf = CustomField.objects.get(name='PID')
-            device.custom_field_data['PID'] = None
-            device.save()
-            if Device.objects.filter(custom_field_data__PID=pid_value).exclude(pk=device.pk).exists():
-                raise forms.ValidationError({'cf_pid': f'PID {pid_value} is already in use by another device.'})
-        except forms.ValidationError:
-            raise
-        except Exception as e:
-            raise forms.ValidationError(str(e))
         device.custom_field_data['PID'] = pid_value
+        
         device.save()
 
-        new_service = device.local_context_data['KAK_DATA']['services']
+        new_service = self.cleaned_data.get('Services', '')
         new_device_type = self.cleaned_data.get('device_type')
         new_lan = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
         new_wan = self.cleaned_data.get('Given_WAN_Address', '')
@@ -651,8 +719,9 @@ class CustomDeviceForm(forms.ModelForm):
         return device
 
     def _create_interfaces_from_config(self, device):
-        kak_data = device.local_context_data.get('KAK_DATA', {})
-        service = kak_data.get('services', '')
+        all_service_slugs = {choice[0] for choice in self.SERVICE_CHOICES if choice[0]}
+        service_tag = device.tags.filter(slug__in=all_service_slugs).first()
+        service = service_tag.slug if service_tag else ''
         interfaces_to_create = self._get_default_interfaces_for_service(service, device)
         if not interfaces_to_create:
             logger.warning(f"No interfaces returned for service '{service}' on {device.name}, aborting.")
@@ -785,18 +854,27 @@ class CustomDeviceForm(forms.ModelForm):
             return f"{host_ip}/{network.prefixlen}"
 
         except ValueError as e:
-            print(f"Invalid WAN IP: {e}")
             return None
 
 
     def _get_default_interfaces_for_service(self, service, device):
         device_model = device.device_type.model.lower() if device.device_type else ''
         kak_data = device.local_context_data.get('KAK_DATA', {})
-        wan_ip   = kak_data.get('wan', '')
-        lan_ip   = kak_data.get('lan', '')
         tunnel   = kak_data.get('tunnel', '')
         cellular = kak_data.get('cellular', '')
-
+        wan_ip = str(device.primary_ip4.address) if device.primary_ip4 else ''
+        LAN_INTERFACE_NAMES = ['lan', 'internal', 'bridge1', 'Vlan1', 'interval', 'dmz']
+        TUNNEL_INTERFACE_NAMES   = ['Tunnel0']
+        CELLULAR_INTERFACE_NAMES = ['Cellular0']
+        lan_ip = tunnel = cellular = ''
+        for iface in device.interfaces.prefetch_related('ip_addresses').all():
+            ip_str = str(iface.ip_addresses.first().address) if iface.ip_addresses.first() else ''
+            if not lan_ip and iface.name in LAN_INTERFACE_NAMES:
+                lan_ip = ip_str
+            elif not tunnel and iface.name in TUNNEL_INTERFACE_NAMES:
+                tunnel = ip_str
+            elif not cellular and iface.name in CELLULAR_INTERFACE_NAMES:
+                cellular = ip_str
         calculated_wan_ip         = self._calculate_wan_ip_from_29(wan_ip)
         calculated_wan_ip_from_30 = self._calculate_wan_ip_from_30(wan_ip)
 
