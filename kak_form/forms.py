@@ -268,45 +268,45 @@ class CustomDeviceForm(forms.ModelForm):
                 ';'.join(additional) if isinstance(additional, list) else (additional or '')
             )
 
-        if dhcp_cf:
-            import ipaddress as _ip
-            try:
-                iface = _ip.IPv4Interface(lan_ip_initial)
-                network = iface.network
-                net_addr = int(network.network_address)
-                broadcast = int(network.broadcast_address)
-                first_host = net_addr + 1
-                last_host = broadcast - 1
-                prefix_str = str(network.network_address).rsplit('.', 1)[0]
-                total_hosts = last_host - first_host + 1
+            if dhcp_cf:
+                import ipaddress as _ip
+                try:
+                    iface = _ip.IPv4Interface(lan_ip_initial)
+                    network = iface.network
+                    net_addr = int(network.network_address)
+                    broadcast = int(network.broadcast_address)
+                    first_host = net_addr + 1
+                    last_host = broadcast - 1
+                    prefix_str = str(network.network_address).rsplit('.', 1)[0]
+                    total_hosts = last_host - first_host + 1
 
-                parts = []
-                for rng in dhcp_cf.split(','):
-                    rng = rng.strip()
-                    if '-' not in rng:
-                        continue
-                    s, e = rng.split('-', 1)
-                    start_ip = _ip.IPv4Address(f"{prefix_str}.{s.strip()}")
-                    end_ip   = _ip.IPv4Address(f"{prefix_str}.{e.strip()}")
-                    start_int = int(start_ip)
-                    end_int   = int(end_ip)
+                    parts = []
+                    for rng in dhcp_cf.split(','):
+                        rng = rng.strip()
+                        if '-' not in rng:
+                            continue
+                        s, e = rng.split('-', 1)
+                        start_ip = _ip.IPv4Address(f"{prefix_str}.{s.strip()}")
+                        end_ip   = _ip.IPv4Address(f"{prefix_str}.{e.strip()}")
+                        start_int = int(start_ip)
+                        end_int   = int(end_ip)
 
-                    if first_host <= start_int <= last_host and first_host <= end_int <= last_host:
-                        parts.append(f"{start_ip}-{end_ip}")
-                    else:
-                        if total_hosts >= 100:
-                            new_start = _ip.IPv4Address(net_addr + 100)
-                            new_end   = _ip.IPv4Address(net_addr + 200)
+                        if first_host <= start_int <= last_host and first_host <= end_int <= last_host:
+                            parts.append(f"{start_ip}-{end_ip}")
                         else:
-                            new_start = _ip.IPv4Address(first_host)
-                            new_end   = _ip.IPv4Address(last_host)
-                        parts.append(f"{new_start}-{new_end}")
+                            if total_hosts >= 100:
+                                new_start = _ip.IPv4Address(net_addr + 100)
+                                new_end   = _ip.IPv4Address(net_addr + 200)
+                            else:
+                                new_start = _ip.IPv4Address(first_host)
+                                new_end   = _ip.IPv4Address(last_host)
+                            parts.append(f"{new_start}-{new_end}")
 
-                dhcp_ranges_full = ';'.join(parts)
-            except Exception:
-                dhcp_ranges_full = dhcp_cf
+                    dhcp_ranges_full = ';'.join(parts)
+                except Exception:
+                    dhcp_ranges_full = dhcp_cf
 
-        self.fields['DHCP_Ranges'].initial = dhcp_ranges_full
+            self.fields['DHCP_Ranges'].initial = dhcp_ranges_full
 
 
     def _get_auto_config_template(self):
