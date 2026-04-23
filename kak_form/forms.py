@@ -14,7 +14,6 @@ from tenancy.models import TenantGroup
 import logging
 from extras.models import Tag
 from django.db import transaction
-from extras.models import CustomField
 
 logger = logging.getLogger(__name__)
 
