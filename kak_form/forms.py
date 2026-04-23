@@ -106,6 +106,11 @@ class CustomDeviceForm(forms.ModelForm):
         label="Enable DHCP HELPER",
         widget=forms.CheckboxInput(attrs={'class': 'form-check-input', 'id': 'enable_dhcp_helper_checkbox'}),
     )
+    Papildomas_Vienodas = forms.BooleanField(
+        required=False,
+        label="Extra Device",
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input', 'id': 'extra_device'}),
+    )
     DHCP_HELPER = forms.CharField(
         required=False,
         widget=forms.TextInput(attrs={
@@ -115,6 +120,11 @@ class CustomDeviceForm(forms.ModelForm):
             'style': 'display:none;',
         }),
         label="",
+    )
+    PID = forms.IntegerField(
+        required=True,
+        label="PID",
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'placeholder': 'PID'}),
     )
     CAPN_Address = forms.CharField(
         max_length=50,
@@ -141,15 +151,6 @@ class CustomDeviceForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        try:
-            pid_cf = CustomField.objects.get(name='PID')
-            self.fields['cf_pid'] = pid_cf.to_form_field()
-            self.fields['cf_pid'].widget.attrs.update({'class': 'form-control'})
-            self.fields['cf_pid'].required = True
-            if self.instance and self.instance.pk:
-                self.fields['cf_pid'].initial = self.instance.custom_field_data.get('PID')
-        except CustomField.DoesNotExist:
-            pass
 
         self.fields['device_type'] = DynamicModelChoiceField(
             queryset=DeviceType.objects.all(),
@@ -193,7 +194,7 @@ class CustomDeviceForm(forms.ModelForm):
             self._original_wan = str(self.instance.primary_ip4.address) if self.instance.primary_ip4 else ''
             for iface in self.instance.interfaces.prefetch_related('ip_addresses').all():
                 first_ip = iface.ip_addresses.first()
-                if first_ip and iface.name in ['lan', 'internal', 'bridge1', 'Vlan1', 'lan1']:
+                if first_ip and iface.name in ['lan', 'internal', 'bridge1', 'Vlan1', 'lan1', 'interval']:
                     self._original_lan = str(first_ip.address)
                     break
 
@@ -228,8 +229,6 @@ class CustomDeviceForm(forms.ModelForm):
         self.order_fields(['name', 'role', 'Services', 'device_type', 'site'])
 
         if self.instance and self.instance.pk:
-            kak_data = (self.instance.local_context_data or {}).get('KAK_DATA', {})
-
             self.fields['Given_WAN_Address'].initial = (
                 str(self.instance.primary_ip4.address) if self.instance.primary_ip4 else ''
             )
@@ -238,18 +237,18 @@ class CustomDeviceForm(forms.ModelForm):
             for iface in self.instance.interfaces.prefetch_related('ip_addresses').all():
                 first_ip = iface.ip_addresses.first()
                 ip_str = str(first_ip.address) if first_ip else ''
-                if not lan_ip_initial and iface.name in ['lan', 'internal', 'bridge1', 'Vlan1', 'lan1']:
+                if not lan_ip_initial and iface.name in ['lan', 'internal', 'bridge1', 'Vlan1', 'lan1','interval']:
                     lan_ip_initial = ip_str
                 elif not tunnel_initial and iface.name == 'Tunnel0':
                     tunnel_initial = ip_str
                 elif not cellular_initial and iface.name == 'Cellular0':
                     cellular_initial = ip_str
-
+            self.fields['PID'].initial = (self.instance.custom_field_data or {}).get('PID', '')
             self.fields['LAN_IP_Address_And_Subnet_Mask'].initial = lan_ip_initial
             self.fields['Tunnel'].initial = tunnel_initial
             self.fields['Cellular'].initial = cellular_initial
-
-            self.fields['CAPN_Address'].initial = kak_data.get('capn', '')
+            capn_cf = (self.instance.custom_field_data or {}).get('CAPN', '')
+            self.fields['CAPN_Address'].initial = capn_cf
             dhcp_cf = (self.instance.custom_field_data or {}).get('DHCP', '')
             self.fields['Enable_DHCP'].initial = bool(dhcp_cf)
             all_service_slugs = {choice[0] for choice in self.SERVICE_CHOICES if choice[0]}
@@ -262,12 +261,15 @@ class CustomDeviceForm(forms.ModelForm):
             existing_sla_tag = self.instance.tags.filter(slug__in=self.SLA_TAG_SLUGS).first()
             if existing_sla_tag:
                 self.fields['SLA'].initial = existing_sla_tag.slug
-
-            additional = kak_data.get('additional_lan_ips', [])
-            self.fields['Additional_LAN_IPs'].initial = (
-                ';'.join(additional) if isinstance(additional, list) else (additional or '')
-            )
-
+        
+            additional_pks = (self.instance.custom_field_data or {}).get('Additional_LAN_IP', [])
+            if additional_pks:
+                additional_ips = list(
+                    IPAddress.objects.filter(pk__in=additional_pks).values_list('address', flat=True)
+                )
+                self.fields['Additional_LAN_IPs'].initial = ';'.join(str(a) for a in additional_ips)
+            else:
+                self.fields['Additional_LAN_IPs'].initial = ''
             if dhcp_cf:
                 import ipaddress as _ip
                 try:
@@ -306,7 +308,7 @@ class CustomDeviceForm(forms.ModelForm):
                 except Exception:
                     dhcp_ranges_full = dhcp_cf
 
-            self.fields['DHCP_Ranges'].initial = dhcp_ranges_full
+                self.fields['DHCP_Ranges'].initial = dhcp_ranges_full
 
 
     def _get_auto_config_template(self):
@@ -368,9 +370,7 @@ class CustomDeviceForm(forms.ModelForm):
 
     def clean(self):
             cleaned_data = super().clean()
-            pid = cleaned_data.get('cf_pid')
-
-
+            pid = cleaned_data.get('PID')
             lan_ip = cleaned_data.get('LAN_IP_Address_And_Subnet_Mask')
             wan_ip = cleaned_data.get('Given_WAN_Address')
             tenant = cleaned_data.get('tenant')
@@ -423,12 +423,27 @@ class CustomDeviceForm(forms.ModelForm):
                         raise forms.ValidationError(f"DHCP range '{rng}' is outside the LAN subnet.")
 
             if name:
-                qs = Device.objects.filter(name=name)
-                if self.instance.pk:
-                    qs = qs.exclude(pk=self.instance.pk)
-                if qs.exists():
-                    raise forms.ValidationError(f'A device with name "{name}" already exists.')
+                papildomas = cleaned_data.get('Papildomas_Vienodas', False)
 
+                if papildomas:
+                    import re
+                    base_name = re.sub(r'_\d+$', '', name)
+
+                    base_qs = Device.objects.filter(name=base_name)
+                    if self.instance.pk:
+                        base_qs = base_qs.exclude(pk=self.instance.pk) 
+
+                    if base_qs.exists():
+                        counter = 1
+                        while Device.objects.filter(name=f"{base_name}_{counter}").exists():
+                            counter += 1
+                        cleaned_data['name'] = f"{base_name}_{counter}"
+                    else:
+                        qs = Device.objects.filter(name=name)
+                        if self.instance.pk:
+                            qs = qs.exclude(pk=self.instance.pk)
+                        if qs.exists():
+                            raise forms.ValidationError(f'A device with name "{name}" already exists.')
             def _host(cidr):
                 return cidr.split('/')[0] if cidr and '/' in cidr else (cidr or '')
 
@@ -488,8 +503,8 @@ class CustomDeviceForm(forms.ModelForm):
 
             existing_additional_pks = []
             if self.instance.pk:
-                kak_data = (self.instance.local_context_data or {}).get('KAK_DATA', {})
-                existing_additional_pks = kak_data.get('additional_lan_ip_pks', [])
+                existing_additional_pks = (self.instance.custom_field_data or {}).get('Additional_LAN_IP', [])
+
 
             if lan_ip:
                 self._check_duplicate_ip(lan_ip, vrf)
@@ -516,7 +531,7 @@ class CustomDeviceForm(forms.ModelForm):
             validation_device.custom_field_data['PID'] = pid
 
             try:
-                validation_device.full_clean(exclude=['custom_field_data', 'local_context_data'])
+                validation_device.full_clean(exclude=['custom_field_data'])
             except ValidationError as e:
                 for field, errors in e.message_dict.items():
                     if field == '__all__':
@@ -547,24 +562,26 @@ class CustomDeviceForm(forms.ModelForm):
             for field_name in all_conditional_fields - set(required_fields):
                 self.errors.pop(field_name, None)
                 cleaned_data[field_name] = ''
-
+            if not self.instance.custom_field_data:
+                self.instance.custom_field_data = {}
+            self.instance.custom_field_data['PID'] = cleaned_data.get('PID')
             return cleaned_data
 
     def save(self, commit=True):
         device = super().save(commit=False)
+
+        print(f"[PID DEBUG] custom_field_data on device: {device.custom_field_data}")
+        print(f"[PID DEBUG] custom_field_data on instance: {self.instance.custom_field_data}")
+        print(f"[PID DEBUG] PID from cleaned_data: {self.cleaned_data.get('PID')}")
         if not device.config_template:
             auto_template = self._get_auto_config_template()
             if auto_template:
                 device.config_template = auto_template
 
-        pid_value = self.cleaned_data.get('cf_pid')
-        if not device.custom_field_data:
-            device.custom_field_data = {}
-        device.custom_field_data['PID'] = pid_value
-
-        if not commit:
-            return device
-        
+        pid_value = self.cleaned_data.get('PID')
+        existing_cf = dict(self.instance.custom_field_data or {})
+        existing_cf['PID'] = pid_value
+        device.custom_field_data = existing_cf
         old_tenant = None
         old_vrf = None
         if self.instance.pk:
@@ -598,8 +615,7 @@ class CustomDeviceForm(forms.ModelForm):
                 assigned_object_id__in=own_iface_ids,
             ).update(tenant=new_tenant, vrf=new_vrf)
 
-            old_kak_data = (device.local_context_data or {}).get('KAK_DATA', {})
-            tracked_pks = old_kak_data.get('additional_lan_ip_pks', [])
+            tracked_pks = (device.custom_field_data or {}).get('Additional_LAN_IP', [])
             if tracked_pks:
                 IPAddress.objects.filter(pk__in=tracked_pks).update(
                     tenant=new_tenant, vrf=new_vrf
@@ -635,14 +651,12 @@ class CustomDeviceForm(forms.ModelForm):
         enable_dhcp = self.cleaned_data.get('Enable_DHCP', False)
         dhcp_ranges_str = self.cleaned_data.get('DHCP_Ranges', '') if enable_dhcp else ''
         enable_dhcp_helper = self.cleaned_data.get('Enable_DHCP_HELPER', False)
+
         dhcp_helper_str = self.cleaned_data.get('DHCP_HELPER', '') if enable_dhcp_helper else ''
         additional_lan_ips = self.cleaned_data.get('Additional_LAN_IPs', [])
         vrf = self._get_vrf_for_device(device)
-
-        if not device.local_context_data:
-            device.local_context_data = {}
         
-        old_pks = device.local_context_data.get('KAK_DATA', {}).get('additional_lan_ip_pks', [])
+        old_pks = (device.custom_field_data or {}).get('Additional_LAN_IP', [])
         if old_pks:
             IPAddress.objects.filter(pk__in=old_pks, assigned_object_id__isnull=True).delete()
 
@@ -663,16 +677,6 @@ class CustomDeviceForm(forms.ModelForm):
                 logger.error(f"Failed to get_or_create IPAddress for {ip_cidr!r}: {e}")
                 continue
 
-        device.local_context_data['KAK_DATA'] = {
-            'wan': self.cleaned_data.get('Given_WAN_Address', ''),
-            'lan': self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', ''),
-            'capn': self.cleaned_data.get('CAPN_Address', ''),
-            'cellular': self.cleaned_data.get('Cellular', ''),
-            'tunnel': self.cleaned_data.get('Tunnel', ''),
-            'additional_lan_ips': additional_lan_ips,
-            'additional_lan_ip_pks': new_additional_pks,
-        }
-
         if not device.custom_field_data:
             device.custom_field_data = {}
 
@@ -691,38 +695,52 @@ class CustomDeviceForm(forms.ModelForm):
 
 
         device.custom_field_data['DHCP_Helper'] = dhcp_helper_str
-        pid_value = self.cleaned_data.get('cf_pid')
+        pid_value = self.cleaned_data.get('PID')
         device.custom_field_data['PID'] = pid_value
-        
+        device.custom_field_data['CAPN'] = self.cleaned_data.get('CAPN_Address', '')
         device.save()
 
         new_service = self.cleaned_data.get('Services', '')
         new_device_type = self.cleaned_data.get('device_type')
         new_lan = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
         new_wan = self.cleaned_data.get('Given_WAN_Address', '')
-
         if (
             new_service != self._original_service
             or new_device_type != self._original_device_type
             or new_lan != self._original_lan
             or new_wan != self._original_wan
         ):
-            self._create_interfaces_from_config(device)
+            if new_wan:
+                vrf = self._get_vrf_for_device(device)
+                wan_ip_obj, _ = IPAddress.objects.get_or_create(
+                    address=new_wan,
+                    vrf=vrf,
+                    tenant=device.tenant,
+                    defaults={'status': 'active'},
+                )
+                device.primary_ip4 = wan_ip_obj
+                Device.objects.filter(pk=device.pk).update(primary_ip4=wan_ip_obj)
+            self._create_interfaces_from_config(
+                device,
+                lan_ip=self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', ''),
+                wan_ip=self.cleaned_data.get('Given_WAN_Address', ''),
+                tunnel=self.cleaned_data.get('Tunnel', ''),
+                cellular=self.cleaned_data.get('Cellular', ''),
+            )
 
-        lan_ip_str = self.cleaned_data.get('LAN_IP_Address_And_Subnet_Mask', '')
-        lan_ip_obj = IPAddress.objects.filter(address=lan_ip_str, vrf=vrf).first() if lan_ip_str else None
-        device.custom_field_data['LAN_IP'] = int(lan_ip_obj.pk) if lan_ip_obj else None
         device.custom_field_data['Additional_LAN_IP'] = new_additional_pks
         device.save() 
 
         device.refresh_from_db()
         return device
 
-    def _create_interfaces_from_config(self, device):
+    def _create_interfaces_from_config(self, device, lan_ip='', wan_ip='', tunnel='', cellular=''):
         all_service_slugs = {choice[0] for choice in self.SERVICE_CHOICES if choice[0]}
         service_tag = device.tags.filter(slug__in=all_service_slugs).first()
         service = service_tag.slug if service_tag else ''
-        interfaces_to_create = self._get_default_interfaces_for_service(service, device)
+        interfaces_to_create = self._get_default_interfaces_for_service(
+        service, device, lan_ip=lan_ip, wan_ip=wan_ip, tunnel=tunnel, cellular=cellular
+        )
         if not interfaces_to_create:
             logger.warning(f"No interfaces returned for service '{service}' on {device.name}, aborting.")
             return
@@ -857,24 +875,8 @@ class CustomDeviceForm(forms.ModelForm):
             return None
 
 
-    def _get_default_interfaces_for_service(self, service, device):
+    def _get_default_interfaces_for_service(self, service, device, lan_ip='', wan_ip='', tunnel='', cellular=''):
         device_model = device.device_type.model.lower() if device.device_type else ''
-        kak_data = device.local_context_data.get('KAK_DATA', {})
-        tunnel   = kak_data.get('tunnel', '')
-        cellular = kak_data.get('cellular', '')
-        wan_ip = str(device.primary_ip4.address) if device.primary_ip4 else ''
-        LAN_INTERFACE_NAMES = ['lan', 'internal', 'bridge1', 'Vlan1', 'interval', 'dmz']
-        TUNNEL_INTERFACE_NAMES   = ['Tunnel0']
-        CELLULAR_INTERFACE_NAMES = ['Cellular0']
-        lan_ip = tunnel = cellular = ''
-        for iface in device.interfaces.prefetch_related('ip_addresses').all():
-            ip_str = str(iface.ip_addresses.first().address) if iface.ip_addresses.first() else ''
-            if not lan_ip and iface.name in LAN_INTERFACE_NAMES:
-                lan_ip = ip_str
-            elif not tunnel and iface.name in TUNNEL_INTERFACE_NAMES:
-                tunnel = ip_str
-            elif not cellular and iface.name in CELLULAR_INTERFACE_NAMES:
-                cellular = ip_str
         calculated_wan_ip         = self._calculate_wan_ip_from_29(wan_ip)
         calculated_wan_ip_from_30 = self._calculate_wan_ip_from_30(wan_ip)
 
@@ -1018,7 +1020,7 @@ class CustomDeviceForm(forms.ModelForm):
             if 'rb760igs capn' in device_model:
                 interfaces = [
                     {'name': 'ether1',  'type': '1000base-t', 'enabled': True},
-                    {'name': 'bridge1', 'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
+                    {'name': 'bridge1', 'type': 'bridge',     'enabled': True,  'ip': lan_ip},
                     {'name': 'ether2',  'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'ether3',  'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
                     {'name': 'ether4',  'type': '1000base-t', 'enabled': True,  'bridge': 'bridge1'},
@@ -1030,7 +1032,7 @@ class CustomDeviceForm(forms.ModelForm):
                     {'name': 'wan1',      'type': '1000base-t', 'enabled': True},
                     {'name': 'wan2',      'type': '1000base-t', 'enabled': True,  'description': 'WAN interface (DHCP)'},
                     {'name': 'dmz',       'type': '1000base-t', 'enabled': True,  'description': 'Default: 10.10.10.1'},
-                    {'name': 'internal',  'type': 'bridge',     'enabled': True,  'ip': lan_ip, 'is_primary': True},
+                    {'name': 'internal',  'type': 'bridge',     'enabled': True,  'ip': lan_ip},
                     {'name': 'internal1', 'type': '1000base-t', 'enabled': True},
                     {'name': 'internal2', 'type': '1000base-t', 'enabled': True},
                     {'name': 'internal3', 'type': '1000base-t', 'enabled': True},

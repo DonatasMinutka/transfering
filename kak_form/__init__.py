@@ -11,6 +11,6 @@ class MyPluginConfig(PluginConfig):
         super().ready()
         from . import navigation
         from . import config_file_extension
-        from . import signals
+        #from . import signals
 
 config = MyPluginConfig 
