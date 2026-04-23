@@ -54,8 +54,9 @@ class CustomDeviceForm(forms.ModelForm):
         ('sla0', 'SLA0'),
         ('sla1', 'SLA1'),
         ('sla2', 'SLA2'),
+        ('sla3', 'SLA3'),
     ]
-    SLA_TAG_SLUGS = ['sla0', 'sla1', 'sla2']
+    SLA_TAG_SLUGS = ['sla0', 'sla1', 'sla2','sla3']
     Services = forms.ChoiceField(
         choices=SERVICE_CHOICES,
         required=True,
