@@ -73,7 +73,7 @@ class CustomDeviceForm(forms.ModelForm):
         max_length=50,
         required=False,
         validators=[validate_ipv4_cidr],
-        widget=forms.TextInput(attrs={'placeholder': '192.168.1.1', 'class': 'form-control'}),
+        widget=forms.TextInput(attrs={'placeholder': '192.168.1.1/32', 'class': 'form-control'}),
         label="WAN IP Address",
     ) 
     LAN_IP_Address_And_Subnet_Mask = forms.CharField(
@@ -468,6 +468,16 @@ class CustomDeviceForm(forms.ModelForm):
                         raise forms.ValidationError(
                             f"ISOP service requires the WAN IP address to use a /29 subnet "
                             f"(e.g. 192.168.1.1/29). You entered '{wan_ip}' which has /{network.prefixlen}."
+                        )
+                except ValueError:
+                    pass 
+            if service == 'capn' and wan_ip:
+                try:
+                    network = ipaddress.IPv4Network(wan_ip, strict=False)
+                    if network.prefixlen != 32:
+                        raise forms.ValidationError(
+                            f"CAPN service requires the WAN IP address to use a /32 subnet "
+                            f"(e.g. 192.168.1.1/32). You entered '{wan_ip}' which has /{network.prefixlen}."
                         )
                 except ValueError:
                     pass 
